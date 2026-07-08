@@ -134,7 +134,7 @@
 		"zustand": "^5.0.14"
 	},
 	"devDependencies": {
-		"@ryuzaki13/react-foundation-lib": ">=0.1.0 <2.0.0",
+		"@ryuzaki13/react-foundation-lib": "^1.x",
 		"@tanstack/query-broadcast-client-experimental": "^5.101.1",
 		"@tanstack/query-persist-client-core": "^5.101.1",
 		"@tanstack/react-query": "^5.101.1",
