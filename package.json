@@ -1,0 +1,202 @@
+{
+	"name": "@ryuzaki13/react-foundation-api",
+	"version": "1.0.1",
+	"description": "Reusable React and TypeScript foundation API helpers and transport adapters.",
+	"license": "MIT",
+	"author": "Ryuzaki13",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Ryuzaki13/react-foundation-api.git"
+	},
+	"bugs": {
+		"url": "https://github.com/Ryuzaki13/react-foundation-api/issues"
+	},
+	"homepage": "https://github.com/Ryuzaki13/react-foundation-api#readme",
+	"keywords": [
+		"react",
+		"typescript",
+		"foundation",
+		"api",
+		"http",
+		"odata",
+		"tanstack-query",
+		"vite",
+		"esm"
+	],
+	"packageManager": "npm@11.7.0",
+	"type": "module",
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"exports": {
+		"./adt": {
+			"types": "./dist/adt/index.d.ts",
+			"import": "./dist/adt/index.js"
+		},
+		"./async": {
+			"types": "./dist/async/index.d.ts",
+			"import": "./dist/async/index.js"
+		},
+		"./error-report": {
+			"types": "./dist/error-report/index.d.ts",
+			"import": "./dist/error-report/index.js"
+		},
+		"./http": {
+			"types": "./dist/http/index.d.ts",
+			"import": "./dist/http/index.js"
+		},
+		"./odata": {
+			"types": "./dist/odata/index.d.ts",
+			"import": "./dist/odata/index.js"
+		},
+		"./persisted": {
+			"types": "./dist/persisted/index.d.ts",
+			"import": "./dist/persisted/index.js"
+		},
+		"./resource": {
+			"types": "./dist/resource/index.d.ts",
+			"import": "./dist/resource/index.js"
+		},
+		"./s3": {
+			"types": "./dist/s3/index.d.ts",
+			"import": "./dist/s3/index.js"
+		},
+		"./server-fn": {
+			"types": "./dist/server-fn/index.d.ts",
+			"import": "./dist/server-fn/index.js"
+		},
+		"./transport": {
+			"types": "./dist/transport/index.d.ts",
+			"import": "./dist/transport/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"typesVersions": {
+		"*": {
+			"adt": [
+				"dist/adt/index.d.ts"
+			],
+			"async": [
+				"dist/async/index.d.ts"
+			],
+			"error-report": [
+				"dist/error-report/index.d.ts"
+			],
+			"http": [
+				"dist/http/index.d.ts"
+			],
+			"odata": [
+				"dist/odata/index.d.ts"
+			],
+			"persisted": [
+				"dist/persisted/index.d.ts"
+			],
+			"resource": [
+				"dist/resource/index.d.ts"
+			],
+			"s3": [
+				"dist/s3/index.d.ts"
+			],
+			"server-fn": [
+				"dist/server-fn/index.d.ts"
+			],
+			"transport": [
+				"dist/transport/index.d.ts"
+			]
+		}
+	},
+	"scripts": {
+		"build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
+		"typecheck": "tsc -p tsconfig.build.json --noEmit",
+		"test": "vitest run",
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix",
+		"validate": "npm run lint:fix && npm run typecheck && npm run test && npm run build",
+		"pack:dry-run": "npm run validate && npm pack --dry-run",
+		"prepublishOnly": "npm run validate"
+	},
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	},
+	"peerDependencies": {
+		"@ryuzaki13/react-foundation-lib": ">=0.1.0 <2.0.0",
+		"@tanstack/query-broadcast-client-experimental": "^5.101.1",
+		"@tanstack/query-persist-client-core": "^5.101.1",
+		"@tanstack/react-query": "^5.101.1",
+		"fast-xml-parser": "^5.9.3",
+		"immer": "^11.1.8",
+		"react": "^19.2.7",
+		"zod": "^4.4.3",
+		"zustand": "^5.0.14"
+	},
+	"devDependencies": {
+		"@ryuzaki13/react-foundation-lib": ">=0.1.0 <2.0.0",
+		"@tanstack/query-broadcast-client-experimental": "^5.101.1",
+		"@tanstack/query-persist-client-core": "^5.101.1",
+		"@tanstack/react-query": "^5.101.1",
+		"@types/node": "^26.1.1",
+		"@types/react": "^19.2.17",
+		"@types/react-dom": "^19.2.3",
+		"eslint": "^10.6.0",
+		"eslint-import-resolver-typescript": "^4.4.5",
+		"eslint-plugin-import-x": "^4.17.1",
+		"eslint-plugin-prettier": "^5.5.6",
+		"eslint-plugin-react-hooks": "^7.1.1",
+		"eslint-plugin-react-refresh": "^0.5.3",
+		"fast-xml-parser": "^5.9.3",
+		"globals": "^17.7.0",
+		"immer": "^11.1.8",
+		"jiti": "^2.7.0",
+		"jsdom": "^29.1.1",
+		"react": "^19.2.7",
+		"react-dom": "^19.2.7",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.63.0",
+		"vite": "^8.1.0",
+		"vitest": "^4.1.9",
+		"zod": "^4.4.3",
+		"zustand": "^5.0.14"
+	},
+	"engines": {
+		"node": ">=24.0.0"
+	},
+	"peerDependenciesMeta": {
+		"@tanstack/react-query": {
+			"optional": true
+		},
+		"fast-xml-parser": {
+			"optional": true
+		},
+		"react": {
+			"optional": true
+		},
+		"@tanstack/query-broadcast-client-experimental": {
+			"optional": true
+		},
+		"@tanstack/query-persist-client-core": {
+			"optional": true
+		},
+		"immer": {
+			"optional": true
+		},
+		"zod": {
+			"optional": true
+		},
+		"zustand": {
+			"optional": true
+		}
+	},
+	"release": {
+		"branches": [
+			"master",
+			{
+				"name": "beta",
+				"prerelease": true
+			}
+		]
+	}
+}
