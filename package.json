@@ -60,10 +60,6 @@
 			"types": "./dist/resource/index.d.ts",
 			"import": "./dist/resource/index.js"
 		},
-		"./s3": {
-			"types": "./dist/s3/index.d.ts",
-			"import": "./dist/s3/index.js"
-		},
 		"./server-fn": {
 			"types": "./dist/server-fn/index.d.ts",
 			"import": "./dist/server-fn/index.js"
@@ -96,9 +92,6 @@
 			],
 			"resource": [
 				"dist/resource/index.d.ts"
-			],
-			"s3": [
-				"dist/s3/index.d.ts"
 			],
 			"server-fn": [
 				"dist/server-fn/index.d.ts"

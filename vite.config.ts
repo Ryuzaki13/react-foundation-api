@@ -50,7 +50,6 @@ export default defineConfig((configEnv) => ({
 				"odata/index": resolve("src/odata/index.ts"),
 				"persisted/index": resolve("src/persisted/index.ts"),
 				"resource/index": resolve("src/resource/index.ts"),
-				"s3/index": resolve("src/s3/index.ts"),
 				"server-fn/index": resolve("src/server-fn/index.ts"),
 				"transport/index": resolve("src/transport/index.ts")
 			},
