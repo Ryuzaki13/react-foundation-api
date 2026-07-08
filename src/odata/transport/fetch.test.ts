@@ -90,7 +90,7 @@ describe("fetchBase", () => {
 		} as Response);
 
 		await expect(fetchBase("/Filters?cfo-count", {}, "config")).rejects.toMatchObject({
-			recoveryUrl: "/some/config/Filters?cfo-count",
+			recoveryUrl: "/text-app/config/Filters?cfo-count",
 			recoverable: false
 		});
 	});
@@ -156,7 +156,7 @@ describe("fetchBase", () => {
 			expect.objectContaining({ message: "Unexpected HTML response from OData endpoint" }),
 			expect.objectContaining({
 				source: "fetch.parseResponse",
-				requestUrl: "/some/config/Filters",
+				requestUrl: "/text-app/config/Filters",
 				method: "GET",
 				baseUrlType: "config",
 				status: 200,

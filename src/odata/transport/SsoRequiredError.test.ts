@@ -15,7 +15,7 @@ describe("submitSsoForm", () => {
 
 		expect(
 			submitSsoForm({
-				action: "https://sapbpcxx0.some.site/sap/saml2/sp/acs/300",
+				action: "https://sap-auth.example.test/sap/saml2/sp/acs/300",
 				method: "POST",
 				inputs: {
 					SAMLResponse: "token",
@@ -37,11 +37,11 @@ describe("submitSsoForm", () => {
 	it("восстанавливает SSO по исходному URL в скрытом iframe без перезагрузки страницы", async () => {
 		vi.useFakeTimers();
 
-		const recovery = recoverSsoSession({ recoveryUrl: "/some/config/Filters?cfo-count" });
+		const recovery = recoverSsoSession({ recoveryUrl: "/text-app/config/Filters?cfo-count" });
 		const iframe = document.querySelector("iframe");
 
 		expect(iframe).not.toBeNull();
-		expect(iframe?.getAttribute("src")).toBe("/some/config/Filters?cfo-count");
+		expect(iframe?.getAttribute("src")).toBe("/text-app/config/Filters?cfo-count");
 
 		iframe?.dispatchEvent(new Event("load"));
 		await vi.advanceTimersByTimeAsync(400);

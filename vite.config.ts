@@ -25,17 +25,26 @@ function isExternalPackage(id: string): boolean {
 	return externalPackages.some((packageName) => id === packageName || id.startsWith(`${packageName}/`));
 }
 
-export default defineConfig((configEnv) => ({
-	define: {
+function createDefine(configEnv: { mode: string }): Record<string, string> {
+	if (configEnv.mode !== "test" && process.env.VITEST !== "true") {
+		return {};
+	}
+
+	return {
 		__APP_BUILD_ID__: JSON.stringify(`${packageJson.name}@${packageJson.version}`),
 		__APP_ID__: JSON.stringify(`${packageJson.name}@${packageJson.version}`),
-		__DEV__: JSON.stringify(configEnv.mode !== "production"),
+		__DEV__: "true",
 		__PREVIEW__: "false",
+		__REACT_QUERY_PERSISTENCE_BUSTER__: JSON.stringify("react-foundation-api-query-test"),
 		__SAP_CLIENT__: JSON.stringify("300"),
-		__SSO_ORIGIN__: JSON.stringify("https://sso.some.site"),
-		__ORIGIN_REG_EXP__: JSON.stringify("^https:\/\/sapbpc[a-z0-9-]+\.some\.site$"),
-		__BASE_APP_CONFIG_URL__: JSON.stringify("/some/config")
-	},
+		__SSO_ORIGIN__: JSON.stringify("https://sso.example.test"),
+		__ORIGIN_REG_EXP__: JSON.stringify("^https:\\/\\/sap-auth(?:-[a-z]+)?\\.example\\.test$"),
+		__BASE_APP_CONFIG_URL__: JSON.stringify("/text-app/config")
+	};
+}
+
+export default defineConfig((configEnv) => ({
+	define: createDefine(configEnv),
 	build: {
 		target: "es2022",
 		sourcemap: true,
