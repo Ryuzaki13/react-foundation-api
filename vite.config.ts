@@ -27,9 +27,9 @@ function isExternalPackage(id: string): boolean {
 
 export default defineConfig((configEnv) => ({
 	define: {
-		__APP_BUILD_ID__: JSON.stringify(import.meta.env.APP_BUILD_ID ?? `${packageJson.name}@${packageJson.version}`),
-		__APP_ID__: JSON.stringify(import.meta.env.APP_ID ?? `${packageJson.name}@${packageJson.version}`),
-		__DEV__: JSON.stringify(import.meta.env.DEV ?? configEnv.mode !== "production"),
+		__APP_BUILD_ID__: JSON.stringify(`${packageJson.name}@${packageJson.version}`),
+		__APP_ID__: JSON.stringify(`${packageJson.name}@${packageJson.version}`),
+		__DEV__: JSON.stringify(configEnv.mode !== "production"),
 		__PREVIEW__: "false",
 		__SAP_CLIENT__: JSON.stringify("300"),
 		__SSO_ORIGIN__: JSON.stringify("https://sso.some.site"),
