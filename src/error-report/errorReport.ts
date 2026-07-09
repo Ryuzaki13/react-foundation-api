@@ -21,7 +21,7 @@ export type ErrorReportDeliveryBody = {
 
 export type ErrorReportDeliveryContext = {
 	draft: ErrorReportDraft;
-	queryClient?: QueryClient;
+	queryClient: QueryClient;
 };
 
 export type ErrorReportDeliveryAdapter = (body: ErrorReportDeliveryBody, context: ErrorReportDeliveryContext) => Promise<void>;
