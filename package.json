@@ -103,7 +103,7 @@
 	},
 	"scripts": {
 		"build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
-		"typecheck": "tsc -p tsconfig.build.json --noEmit",
+		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
