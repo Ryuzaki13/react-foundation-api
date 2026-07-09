@@ -28,7 +28,7 @@ export type ErrorReportDeliveryAdapter = (body: ErrorReportDeliveryBody, context
 
 export interface SendErrorReportOptions {
 	adapter: ErrorReportDeliveryAdapter;
-	queryClient?: QueryClient;
+	queryClient: QueryClient;
 }
 
 export function createErrorReportDeliveryBody(draft: ErrorReportDraft): ErrorReportDeliveryBody {
