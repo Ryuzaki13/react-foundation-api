@@ -92,11 +92,12 @@ describe("errorReportApi", () => {
 
 	it("не повторяет отправку уже отправленного draft", async () => {
 		const draft = createDraft({ status: "sent" });
+		const queryClient = new QueryClient();
 		const adapter = vi.fn();
 
 		errorReportDraftStoreMock.getErrorReportDraft.mockReturnValue(draft);
 
-		await expect(sendErrorReport("report-1", { adapter })).resolves.toBe(draft);
+		await expect(sendErrorReport("report-1", { adapter, queryClient })).resolves.toBe(draft);
 
 		expect(adapter).not.toHaveBeenCalled();
 		expect(errorReportDraftStoreMock.updateErrorReportDraft).not.toHaveBeenCalled();
@@ -105,12 +106,13 @@ describe("errorReportApi", () => {
 	it("фиксирует failed status при ошибке adapter", async () => {
 		const draft = createDraft();
 		const adapterError = new Error("transport failed");
+		const queryClient = new QueryClient();
 		const adapter = vi.fn().mockRejectedValue(adapterError);
 
 		errorReportDraftStoreMock.getErrorReportDraft.mockReturnValue(draft);
 		errorReportDraftStoreMock.updateErrorReportDraft.mockReturnValue(createDraft({ status: "sending" }));
 
-		await expect(sendErrorReport("report-1", { adapter })).rejects.toBe(adapterError);
+		await expect(sendErrorReport("report-1", { adapter, queryClient })).rejects.toBe(adapterError);
 
 		expect(errorReportDraftStoreMock.updateErrorReportDraft).toHaveBeenLastCalledWith("report-1", {
 			status: "failed",
