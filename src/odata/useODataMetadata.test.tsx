@@ -99,7 +99,7 @@ describe("useODataMetadata", () => {
 		} as ReturnType<typeof useODataMetadataQuery>);
 
 		function Probe() {
-			const result = useODataMetadata({ service: "ZDEMO_SRV", target: "DemoSet" });
+			const result = useODataMetadata({ service: "ZDEMO_SRV", target: "TextEntitySet" });
 			return <div data-updated-at={result.metadataUpdatedAt}>{result.metadata?.title}</div>;
 		}
 
@@ -119,7 +119,7 @@ describe("useODataMetadata", () => {
 		} as ReturnType<typeof useODataMetadataQuery>);
 
 		function Probe() {
-			useODataMetadata({ service: "ZDEMO_SRV", target: "DemoSet" });
+			useODataMetadata({ service: "ZDEMO_SRV", target: "TextEntitySet" });
 			return <div>unreachable</div>;
 		}
 
