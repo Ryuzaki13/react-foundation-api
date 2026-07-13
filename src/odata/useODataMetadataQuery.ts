@@ -37,10 +37,15 @@ export function fetchMetadata(options: ODataMetadataOptions) {
 	});
 }
 
-export const odataMetadataQueryOptions = (options: ODataMetadataOptions) =>
-	queryOptions({
-		queryKey: [...odataBaseQueryKey, "metadata", options],
-		queryFn: fetchMetadata(options),
+export const odataMetadataQueryOptions = (options: ODataMetadataOptions) => {
+	const resolvedOptions = {
+		service: options.service,
+		baseUrl: resolveODataBaseUrl(options.service, options.baseUrl)
+	};
+
+	return queryOptions({
+		queryKey: [...odataBaseQueryKey, "metadata", resolvedOptions],
+		queryFn: fetchMetadata(resolvedOptions),
 		meta: persistedQueryMeta,
 		enabled: Boolean(options.service),
 		/**
@@ -50,6 +55,7 @@ export const odataMetadataQueryOptions = (options: ODataMetadataOptions) =>
 		staleTime: Infinity,
 		gcTime: Infinity
 	});
+};
 
 /**
  * Применяет результат version-check к metadata query на уровне общего QueryClient.

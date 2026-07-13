@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { persistedQueryMeta, REACT_QUERY_PERSISTENCE_MAX_AGE } from "@ryuzaki13/react-foundation-lib/query-client";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -65,12 +65,19 @@ describe("odata query persistence", () => {
 	});
 
 	it("настраивает metadata query на бесконечную свежесть", () => {
-		const options = odataMetadataQueryOptions({ service: "TEXT_APP_SRV" });
+		const options = odataMetadataQueryOptions({ service: "ZDEMO_SRV" });
 
-		expect(options.queryKey).toEqual(["odata", "metadata", { service: "TEXT_APP_SRV" }]);
+		expect(options.queryKey).toEqual(["odata", "metadata", { service: "ZDEMO_SRV", baseUrl: "odata" }]);
 		expect(options.staleTime).toBe(Infinity);
 		expect(options.gcTime).toBe(Infinity);
 		expect(options.meta).toBe(persistedQueryMeta);
+	});
+
+	it("использует один metadata query key для default и явного OData base URL", () => {
+		const defaultBaseUrlKey = odataMetadataQueryOptions({ service: "ZDEMO_SRV" }).queryKey;
+		const explicitBaseUrlKey = odataMetadataQueryOptions({ service: "ZDEMO_SRV", baseUrl: "odata" }).queryKey;
+
+		expect(defaultBaseUrlKey).toEqual(explicitBaseUrlKey);
 	});
 
 	it("строит отдельный query key для версии metadata", () => {
@@ -149,6 +156,39 @@ describe("odata query persistence", () => {
 		expect(queryClient.getQueryState(["odata", "metadata", { service: "TEXT_DEMO_SRV" }])?.isInvalidated).toBe(true);
 		expect(queryClient.getQueryState(["odata", "metadata", { service: "TEXT_OTHER_SRV" }])?.isInvalidated).toBe(false);
 		expect(queryClient.getQueryState(createODataMetadataVersionQueryKey({ service: "TEXT_DEMO_SRV" }))?.isInvalidated).toBe(false);
+	});
+
+	it("не отменяет уже запущенное обновление metadata при повторной инвалидации", async () => {
+		const queryClient = createTestQueryClient();
+		const metadataOptions = { service: "ZDEMO_SRV" };
+		const metadataQueryKey = odataMetadataQueryOptions(metadataOptions).queryKey;
+		const cachedMetadata = { entities: {}, functionImports: {} };
+		const refreshedMetadata = { entities: { DemoSet: {} }, functionImports: {} };
+		const requestSignals: AbortSignal[] = [];
+		let resolveRequest: (value: typeof refreshedMetadata) => void = () => {};
+		const request = new Promise<typeof refreshedMetadata>((resolve) => {
+			resolveRequest = resolve;
+		});
+
+		queryClient.setQueryData(metadataQueryKey, cachedMetadata);
+		const observer = new QueryObserver(queryClient, {
+			queryKey: metadataQueryKey,
+			queryFn: ({ signal }) => {
+				requestSignals.push(signal);
+				return request;
+			},
+			staleTime: Infinity
+		});
+		const unsubscribe = observer.subscribe(() => {});
+
+		const firstInvalidation = invalidateODataMetadataQueries(queryClient, metadataOptions.service);
+		const secondInvalidation = invalidateODataMetadataQueries(queryClient, metadataOptions.service);
+		resolveRequest(refreshedMetadata);
+		await Promise.all([firstInvalidation, secondInvalidation]);
+
+		expect(requestSignals).toHaveLength(1);
+		expect(requestSignals[0]?.aborted).toBe(false);
+		unsubscribe();
 	});
 
 	it("getODataMetadataData проверяет версию и обновляет сохранённые metadata при изменении сервиса", async () => {

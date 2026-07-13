@@ -8,8 +8,8 @@
 | -------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | TanStack Query persistence | `src/shared/lib/query-client/persistence.ts`             | Ленивое сохранение opt-in query в IndexedDB через per-query persister            |
 | Metadata query             | `src/shared/api/odata/useODataMetadataQuery.ts`          | Загрузка и кеширование `$metadata` OData-сервиса                                 |
-| Metadata version check     | `src/shared/api/odata/metadataVersionCheck.ts`           | Проверка времени последней генерации сервиса через endpoint из `odataProjectAdapter.metadataVersion` |
-| Collection updates query   | `src/shared/api/odata/useODataCollectionUpdatesQuery.ts` | Проверка списка изменённых справочников через endpoint из `odataProjectAdapter.collectionUpdates`   |
+| Metadata version check     | `src/shared/api/odata/metadataVersionCheck.ts`           | Проверка времени последней генерации сервиса через `ZP_ZARM_APP_SERVICE_UPDATED` |
+| Collection updates query   | `src/shared/api/odata/useODataCollectionUpdatesQuery.ts` | Проверка списка изменённых справочников через `ZP_ZARM_APP_TABLES_UPDATED`       |
 | Collection query           | `src/shared/api/odata/useODataCollectionQuery.ts`        | Загрузка справочника, сравнение сигналов свежести и выбор `x-sw-cache` policy    |
 | Service Worker cache       | `src/app/sw.ts` и `src/shared/lib/pwa`                   | HTTP-кеширование ответов по заголовку `x-sw-cache`                               |
 | Azure critical update      | `azure-pipeline.yml` и `config/vite/define.ts`           | Выпуск нового стабильного `__APP_BUILD_ID__` для принудительной проверки         |
@@ -30,7 +30,7 @@
 
 Текущие настройки:
 
-- `REACT_QUERY_PERSISTENCE_BUSTER` берётся из `VITE_REACT_QUERY_PERSISTENCE_BUSTER`, значение по умолчанию — `"${__APP_ID__}-persistence-v1"`;
+- `REACT_QUERY_PERSISTENCE_BUSTER` берётся из `VITE_REACT_QUERY_PERSISTENCE_BUSTER`, значение по умолчанию — `"arm-persist-v4"`;
 - `REACT_QUERY_PERSISTENCE_MAX_AGE = 90 дней`;
 - `refetchOnRestore = true`;
 - физическое хранилище: IndexedDB database текущего SAP/system контекста, object store `queries`;
@@ -45,25 +45,18 @@
 
 Metadata загружается через `odataMetadataQueryOptions()`:
 
-- query key: `["odata", "metadata", { service, baseUrl? }]`;
+- query key: `["odata", "metadata", { service, baseUrl: resolvedBaseUrl }]`;
 - `staleTime = Infinity`;
 - `gcTime = Infinity`;
 - `meta = persistedQueryMeta`.
+
+`baseUrl` в ключе всегда канонизируется через `resolveODataBaseUrl()`. Поэтому вызовы без `baseUrl` и с явным default-значением используют одну запись кеша, а реально разные SAP endpoints остаются разделены.
 
 Сам query считается бесконечно fresh, чтобы не перезагружать `$metadata` при каждом открытии страницы. Решение об обновлении принимает отдельный query версии.
 
 ### Проверка версии metadata
 
-`odataMetadataVersionQueryOptions()` читает технический endpoint, который проект задаёт через `configureODataProjectAdapter()`:
-
-```ts
-configureODataProjectAdapter({
-	metadataVersion: {
-		service: "TEXT_CONFIG_SRV",
-		target: "SERVICE_UPDATED"
-	}
-});
-```
+`odataMetadataVersionQueryOptions()` читает технический target `ZP_ZARM_APP_SERVICE_UPDATED` сервиса `ZARM_APP_SRV`:
 
 - query key: `["odata", "metadata-version", { service, buildId: __APP_BUILD_ID__ }]`;
 - стандартный `staleTime` — 24 часа;
@@ -81,6 +74,8 @@ configureODataProjectAdapter({
 Если `version.changedAt > metadataState.dataUpdatedAt`, инвалидируется только metadata указанного сервиса. Version-check другого сервиса и metadata других сервисов не трогаются.
 
 Если version-check временно недоступен, сохранённые metadata остаются рабочим источником. Это позволяет открыть приложение с persisted metadata даже при кратковременной проблеме технического target.
+
+Ошибка фонового refetch `$metadata` также не удаляет уже восстановленные данные и не переводит страницу в error boundary. Ошибка остаётся в состоянии TanStack Query и общей диагностике, а страница использует сохранённые metadata до успешной повторной загрузки. Ошибка бросается только при первичной загрузке, когда рабочих metadata ещё нет.
 
 ## Справочники
 
@@ -102,16 +97,7 @@ configureODataProjectAdapter({
 
 ### Список обновлений справочников
 
-`useODataCollectionUpdatesQuery()` читает технический endpoint, который проект задаёт через `configureODataProjectAdapter()`:
-
-```ts
-configureODataProjectAdapter({
-	collectionUpdates: {
-		service: "TEXT_CONFIG_SRV",
-		target: "TABLES_UPDATED"
-	}
-});
-```
+`useODataCollectionUpdatesQuery()` читает технический target `ZP_ZARM_APP_TABLES_UPDATED`:
 
 - query key: `["odata", "collection-updates", { buildId: __APP_BUILD_ID__ }]`;
 - `staleTime = 4 часа`;
@@ -153,7 +139,7 @@ configureODataProjectAdapter({
 
 ### 3. Локальный кеш старше недельного окна
 
-Бэкенд-список обновлений справочников содержит изменения только за последнюю неделю. Поэтому отсутствие target в настроенном collection-updates endpoint не доказывает актуальность, если пользователь не открывал приложение дольше недели.
+Бэкенд-список обновлений справочников содержит изменения только за последнюю неделю. Поэтому отсутствие target в `ZP_ZARM_APP_TABLES_UPDATED` не доказывает актуальность, если пользователь не открывал приложение дольше недели.
 
 Для этого `useODataCollectionUpdatesQuery()` рассчитывает `coverageStartedAt = fetchedAt - 7 дней`. Если `cacheUpdatedAt < coverageStartedAt`, открытый справочник обновляется даже без записи в `byEntityName`.
 
@@ -263,7 +249,7 @@ npm run lint
 
 ## Ограничения
 
-- Недельное окно настроенного collection-updates endpoint остаётся бэкенд-ограничением. Фронтенд компенсирует его ленивым обновлением открытых справочников, но не получает точную историю изменений старше недели.
+- Недельное окно `ZP_ZARM_APP_TABLES_UPDATED` остаётся бэкенд-ограничением. Фронтенд компенсирует его ленивым обновлением открытых справочников, но не получает точную историю изменений старше недели.
 - Если технический target списка обновлений недоступен, справочник может загрузиться по обычной policy. Metadata version-check остаётся отдельным сигналом.
 - `buildId` создаёт новые persisted записи технических query после критических билдов. Это осознанная плата за принудительную проверку без сброса всех справочников.
 - Смена структуры данных справочника, несовместимая с persisted payload, должна решаться поднятием `REACT_QUERY_PERSISTENCE_BUSTER`, а не только `[critical-update]`.

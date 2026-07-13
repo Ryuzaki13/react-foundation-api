@@ -1,7 +1,7 @@
 import { setErrorReportTransportErrorReporter } from "@ryuzaki13/react-foundation-lib/error-report";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchBase, fetchJson } from "./fetch";
+import { fetchBase, fetchJson, fetchQueryFn } from "./fetch";
 import { SsoRequiredError } from "./SsoRequiredError";
 
 describe("fetchBase", () => {
@@ -82,6 +82,27 @@ describe("fetchBase", () => {
 		expect(headers.get("Accept")).toBe("application/json");
 		expect(headers.get("Content-Type")).toBeNull();
 		expect(init?.redirect).toBe("manual");
+	});
+
+	it("использует новый AbortSignal при повторном запуске queryFn", async () => {
+		const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response("metadata", { status: 200 })));
+		global.fetch = fetchMock as typeof fetch;
+		const queryFn = fetchQueryFn("/ZDEMO_SRV/$metadata", {
+			baseUrl: "",
+			transform: (response) => response.text()
+		});
+		const firstController = new AbortController();
+		const secondController = new AbortController();
+
+		await queryFn({ signal: firstController.signal });
+		firstController.abort();
+		await queryFn({ signal: secondController.signal });
+
+		const firstRequestInit = fetchMock.mock.calls[0]?.[1];
+		const secondRequestInit = fetchMock.mock.calls[1]?.[1];
+
+		expect(firstRequestInit?.signal).toBe(firstController.signal);
+		expect(secondRequestInit?.signal).toBe(secondController.signal);
 	});
 
 	it("останавливает SAP SSO-редирект до перехода fetch в ADFS", async () => {

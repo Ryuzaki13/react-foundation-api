@@ -70,37 +70,6 @@
 		},
 		"./package.json": "./package.json"
 	},
-	"typesVersions": {
-		"*": {
-			"adt": [
-				"dist/adt/index.d.ts"
-			],
-			"async": [
-				"dist/async/index.d.ts"
-			],
-			"error-report": [
-				"dist/error-report/index.d.ts"
-			],
-			"http": [
-				"dist/http/index.d.ts"
-			],
-			"odata": [
-				"dist/odata/index.d.ts"
-			],
-			"persisted": [
-				"dist/persisted/index.d.ts"
-			],
-			"resource": [
-				"dist/resource/index.d.ts"
-			],
-			"server-fn": [
-				"dist/server-fn/index.d.ts"
-			],
-			"transport": [
-				"dist/transport/index.d.ts"
-			]
-		}
-	},
 	"scripts": {
 		"build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
 		"typecheck": "tsc --noEmit",

@@ -87,4 +87,42 @@ describe("useODataMetadata", () => {
 			"OData target 'setTextVariantDefault' является FunctionImport и не может использоваться как сущность"
 		);
 	});
+
+	it("сохраняет доступ к закешированным metadata при ошибке фонового обновления", () => {
+		mockedUseODataMetadataQuery.mockReturnValue({
+			data: createServiceMetadata(),
+			dataUpdatedAt: 123,
+			isLoading: false,
+			isError: true,
+			isLoadingError: false,
+			isRefetchError: true
+		} as ReturnType<typeof useODataMetadataQuery>);
+
+		function Probe() {
+			const result = useODataMetadata({ service: "ZDEMO_SRV", target: "DemoSet" });
+			return <div data-updated-at={result.metadataUpdatedAt}>{result.metadata?.title}</div>;
+		}
+
+		const html = renderToStaticMarkup(<Probe />);
+
+		expect(html).toContain('data-updated-at="123"');
+		expect(html).toContain("Демо");
+	});
+
+	it("бросает ошибку, если metadata не удалось загрузить изначально", () => {
+		mockedUseODataMetadataQuery.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			isLoadingError: true,
+			isRefetchError: false
+		} as ReturnType<typeof useODataMetadataQuery>);
+
+		function Probe() {
+			useODataMetadata({ service: "ZDEMO_SRV", target: "DemoSet" });
+			return <div>unreachable</div>;
+		}
+
+		expect(() => renderToStaticMarkup(<Probe />)).toThrow("Ошибка загрузки метаданных сервиса ZDEMO_SRV");
+	});
 });

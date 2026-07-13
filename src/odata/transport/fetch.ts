@@ -574,19 +574,22 @@ interface FetchQueryFnOptions<R> extends FetchQueryFnBaseOptions {
 }
 
 export function fetchQueryFn<R = unknown>(url: string, options: FetchQueryFnOptions<R>) {
-	const initValue = options.init || {};
 	const baseUrlValue = options.baseUrl;
 	const transform = options.transform;
 
-	if (options.swCache) {
-		const headers = new Headers(initValue.headers);
-		headers.set("x-sw-cache", options.swCache);
-		initValue.headers = headers;
-	}
-
 	return async (params?: { signal?: AbortSignal }): Promise<R> => {
+		/**
+		 * QueryFn может запускаться повторно после отмены предыдущего refetch.
+		 * Нельзя сохранять signal в замыкании: отменённый signal сразу прервёт следующий запрос.
+		 */
+		const initValue = { ...options.init };
 		if (!initValue.signal && params?.signal) {
 			initValue.signal = params.signal;
+		}
+		if (options.swCache) {
+			const headers = new Headers(initValue.headers);
+			headers.set("x-sw-cache", options.swCache);
+			initValue.headers = headers;
 		}
 
 		const data = await fetchBase(url, initValue, baseUrlValue);

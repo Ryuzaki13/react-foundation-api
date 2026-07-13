@@ -9,14 +9,14 @@ import type { ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-s
  * прослойкой над `useODataMetadataQuery(...)`.
  */
 export function useODataMetadata(odata: ODataServiceConfig) {
-	const { data, dataUpdatedAt = 0, isLoading, isError } = useODataMetadataQuery({ service: odata.service });
+	const { data, dataUpdatedAt = 0, isLoading, isLoadingError } = useODataMetadataQuery({ service: odata.service });
 	const metadata = data?.entities[odata.target];
 
 	if (!isLoading && !metadata && data?.functionImports[odata.target]) {
 		throw new Error(`OData target '${odata.target}' является FunctionImport и не может использоваться как сущность`);
 	}
 
-	if (isError) {
+	if (isLoadingError) {
 		throw new Error(`Ошибка загрузки метаданных сервиса ${odata.service}`);
 	}
 

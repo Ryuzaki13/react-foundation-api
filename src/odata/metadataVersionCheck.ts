@@ -87,17 +87,22 @@ export const odataMetadataVersionQueryOptions = (options: ODataMetadataVersionOp
 /**
  * Инвалидирует только metadata query указанного сервиса.
  * Version-check query и metadata других сервисов при этом остаются нетронутыми.
+ * Повторная инвалидация не отменяет уже запущенный refetch: один сервис может
+ * одновременно использоваться несколькими hooks, а результат version-check у них общий.
  */
 export function invalidateODataMetadataQueries(queryClient: QueryClient, service: string) {
-	return queryClient.invalidateQueries({
-		predicate: (query) => {
-			const [baseKey, queryType, queryOptionsValue] = query.queryKey;
-			if (baseKey !== odataBaseQueryKey[0] || queryType !== "metadata") return false;
-			if (!queryOptionsValue || typeof queryOptionsValue !== "object") return false;
+	return queryClient.invalidateQueries(
+		{
+			predicate: (query) => {
+				const [baseKey, queryType, queryOptionsValue] = query.queryKey;
+				if (baseKey !== odataBaseQueryKey[0] || queryType !== "metadata") return false;
+				if (!queryOptionsValue || typeof queryOptionsValue !== "object") return false;
 
-			return "service" in queryOptionsValue && queryOptionsValue.service === service;
-		}
-	});
+				return "service" in queryOptionsValue && queryOptionsValue.service === service;
+			}
+		},
+		{ cancelRefetch: false }
+	);
 }
 
 export function shouldRefreshODataMetadataByVersion(
