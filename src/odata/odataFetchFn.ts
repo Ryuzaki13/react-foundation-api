@@ -267,14 +267,15 @@ export function odataFetchFn(...args: ODataFetchFnImplementationArgs): ODataFetc
 
 		const body = "body" in opts ? resolveRequestBody(opts.body, method) : undefined;
 		const requestMethod = resolveRequestMethod(target, method);
+		const isPlainEntityQuery = method === "query" && !("result" in target);
 
-		if (__DEV__ && method === "query" && !("result" in target) && Object.keys(params).length > 0) {
+		if (__DEV__ && isPlainEntityQuery && Object.keys(params).length > 0) {
 			console.warn(
 				`OData query для plain entity "${odata.service}/${odata.target}" получил params, но они будут проигнорированы. Для чтения сущности по ключу используйте odataReadFn.`
 			);
 		}
 
-		const targetPath = buildTargetPath(target, odata, params, method);
+		const targetPath = buildTargetPath(target, odata, isPlainEntityQuery ? {} : params, method);
 
 		const queryOptions = swCache ? { ...options, baseUrl, swCache } : { ...options, baseUrl };
 		const requestInit = { ...init, method: requestMethod, body, signal };
