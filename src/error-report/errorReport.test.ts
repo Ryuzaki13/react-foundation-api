@@ -66,6 +66,23 @@ describe("errorReportApi", () => {
 		});
 	});
 
+	it("подставляет сообщение по умолчанию в body и диагностический payload", () => {
+		for (const message of ["", "   "]) {
+			const draft = createDraft();
+			draft.payload.error.message = message;
+
+			const body = createErrorReportDeliveryBody(draft);
+
+			expect(body.errorMessage).toBe("Неизвестная ошибка");
+			expect(body.payload).toBe(
+				JSON.stringify({
+					...draft.payload,
+					error: { ...draft.payload.error, message: "Неизвестная ошибка" }
+				})
+			);
+		}
+	});
+
 	it("отправляет draft через внешний adapter и отмечает его отправленным", async () => {
 		const draft = createDraft();
 		const sentDraft = createDraft({ status: "sent", sentUtc: "2026-05-15T00:00:01.000Z" });

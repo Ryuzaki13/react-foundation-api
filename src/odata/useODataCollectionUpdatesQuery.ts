@@ -82,13 +82,15 @@ export function fetchODataCollectionUpdates() {
 /**
  * Описывает общий TanStack Query со списком обновлённых справочников.
  * Query сохраняется в IndexedDB и дополнительно кешируется Service Worker на короткий TTL.
+ *
+ * При отсутствии endpoint queryFn возвращает пустой успешный результат без сетевого запроса.
+ * Query должен оставаться активным, потому что зависимые справочники ждут его завершения.
  */
 export const odataCollectionUpdatesQueryOptions = (options: ODataCollectionUpdatesOptions = {}) =>
 	queryOptions({
 		queryKey: createODataCollectionUpdatesQueryKey(),
 		queryFn: fetchODataCollectionUpdates(),
 		meta: persistedQueryMeta,
-		enabled: Boolean(getODataProjectAdapter().collectionUpdates),
 		staleTime: options.staleTime ?? COLLECTION_UPDATES_STALE_TIME,
 		gcTime: Infinity
 	});

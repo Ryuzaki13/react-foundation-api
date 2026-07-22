@@ -5,8 +5,11 @@ import {
 	type ErrorReportCategory,
 	type ErrorReportDraft
 } from "@ryuzaki13/react-foundation-lib/error-report";
+import { normalizeText } from "@ryuzaki13/react-foundation-lib/formatters";
 
 import type { QueryClient } from "@tanstack/react-query";
+
+const DEFAULT_ERROR_MESSAGE = "Неизвестная ошибка";
 
 export type ErrorReportDeliveryBody = {
 	reportId: string;
@@ -32,15 +35,25 @@ export interface SendErrorReportOptions {
 }
 
 export function createErrorReportDeliveryBody(draft: ErrorReportDraft): ErrorReportDeliveryBody {
+	// Delivery boundary защищает обязательное backend-поле, включая draft, сохраненные до нормализации в lib.
+	const errorMessage = normalizeText(draft.payload.error.message) ? draft.payload.error.message : DEFAULT_ERROR_MESSAGE;
+	const payload = {
+		...draft.payload,
+		error: {
+			...draft.payload.error,
+			message: errorMessage
+		}
+	};
+
 	return {
 		reportId: draft.reportId,
 		sessionId: draft.sessionId,
 		createdUtc: draft.createdUtc,
 		category: draft.category,
 		errorClass: draft.payload.error.name,
-		errorMessage: draft.payload.error.message,
+		errorMessage,
 		stackTrace: draft.payload.error.stackTrace,
-		payload: JSON.stringify(draft.payload)
+		payload: JSON.stringify(payload)
 	};
 }
 

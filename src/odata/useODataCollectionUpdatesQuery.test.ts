@@ -39,7 +39,18 @@ describe("useODataCollectionUpdatesQuery", () => {
 		expect(options.staleTime).toBe(1000 * 60 * 60 * 4);
 		expect(options.gcTime).toBe(Infinity);
 		expect(options.meta).toBe(persistedQueryMeta);
-		expect(options.enabled).toBe(true);
+	});
+
+	it("без endpoint оставляет query активным и завершает его пустым результатом", async () => {
+		const fetchMock = vi.spyOn(globalThis, "fetch");
+		const options = odataCollectionUpdatesQueryOptions();
+
+		const result = await fetchODataCollectionUpdates()({ signal: new AbortController().signal });
+
+		expect(options.enabled).toBeUndefined();
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(result.items).toEqual([]);
+		expect(result.byEntityName).toEqual({});
 	});
 
 	it("загружает и нормализует список обновлённых справочников", async () => {
