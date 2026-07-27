@@ -14,7 +14,6 @@ export * from "./useODataEntity";
 export * from "./useODataMetadata";
 export * from "./useODataMetadataQuery";
 export * from "./useODataTableColumns";
-export * from "./useTextServiceQuery";
 
 export { odataFetch, type ODataFetchOptions } from "./odataFetch";
 export {
