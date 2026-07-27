@@ -28,6 +28,8 @@
 	"sideEffects": false,
 	"files": [
 		"dist",
+		"src/**/*.mdx",
+		"src/**/README.md",
 		"README.md",
 		"LICENSE"
 	],
