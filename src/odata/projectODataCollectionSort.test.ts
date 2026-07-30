@@ -43,6 +43,12 @@ describe("projectODataCollectionSortByText", () => {
 		expect(projected.chain).toBe(source.chain);
 	});
 
+	it("разделяет готовую text-проекцию между observer одного snapshot", () => {
+		const source = createSource();
+
+		expect(projectODataCollectionSortByText(source)).toBe(projectODataCollectionSortByText(source));
+	});
+
 	it("возвращает исходный snapshot, если сортируемых уровней нет", () => {
 		const source = createSource();
 		const withoutSortableLevels = {
