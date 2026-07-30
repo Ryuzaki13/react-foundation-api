@@ -6,6 +6,7 @@ import { useQuery, useQueryClient, UseQueryResult } from "@tanstack/react-query"
 
 import { createODataCollectionQueryKey } from "./createODataCollectionQueryKey";
 import { fetchCollectionData } from "./fetchCollectionData";
+import { projectODataCollectionSortByText } from "./projectODataCollectionSort";
 import { ODataCollectionConfig } from "./types";
 import {
 	ODATA_COLLECTION_BUST_SW_CACHE,
@@ -19,6 +20,13 @@ export interface ODataCollectionResult<T extends CollectionItem> {
 	items: T[];
 	keyPairs: CollectionPair[];
 	keyPairsMap: Record<string, string>;
+	/**
+	 * Массивы элементов по уровням справочника.
+	 *
+	 * Query cache хранит канонический порядок по code, а конкретный observer
+	 * может получить проекцию по text. Один snapshot при этом переиспользуется
+	 * ракурсами с разными `sortByCode`.
+	 */
 	separated: Record<string, T[]>;
 	chain: { codeKey: string; count: number }[];
 	count: number;
@@ -153,7 +161,14 @@ export function useODataCollectionQuery<T extends CollectionItem>(odata: ODataCo
 				filterdItems = items.filter(clientFilter);
 			}
 
-			const separated = buildSeparatedArrays<T>(filterdItems, keyPairs, excludeEmpty, sortByCode);
+			/**
+			 * Query cache хранит единую каноническую проекцию справочника.
+			 *
+			 * Сортировка конкретного контрола применяется observer-проекцией ниже,
+			 * чтобы два ракурса с разными `sortByCode` переиспользовали один snapshot,
+			 * а не конкурировали за его порядок и не дублировали всю коллекцию в памяти.
+			 */
+			const separated = buildSeparatedArrays<T>(filterdItems, keyPairs, excludeEmpty, true);
 
 			// Рассчитать порядок от меньшего к большему
 			const chain = keyPairs
@@ -179,6 +194,11 @@ export function useODataCollectionQuery<T extends CollectionItem>(odata: ODataCo
 		/**
 		 * Если справочник не используется более часа, то можно из памяти выгрузить.
 		 */
-		gcTime: 1000 * 60 * 60 * 1
+		gcTime: 1000 * 60 * 60 * 1,
+		/**
+		 * Сортировка является представлением observer, а не identity Query.
+		 * TanStack мемоизирует select-проекцию и не сохраняет её в общий cache.
+		 */
+		select: sortByCode === false ? projectODataCollectionSortByText<T> : undefined
 	});
 }

@@ -81,12 +81,23 @@ Metadata загружается через `odataMetadataQueryOptions()`:
 
 `useODataCollectionQuery()` используется потребителями справочников. Query key строится через `createODataCollectionQueryKey()` и включает:
 
+- версию формы persisted snapshot;
 - `service`;
 - `target`;
 - `limitedKeys`;
 - `serverFilter`.
 
 Результат справочника содержит `cacheUpdatedAt`. Это прикладной timestamp, который сохраняется вместе с данными и нужен для сравнения с внешними сигналами свежести.
+
+Версия snapshot меняется только при несовместимом изменении кешируемой формы. Текущая версия отделяет прежние записи, порядок `separated` которых мог зависеть от первого consumer, от канонической сортировки по code.
+
+`sortByCode` намеренно не входит в query key. Query хранит один канонический `separated`, отсортированный по code, а observer-level `select` TanStack Query применяет порядок конкретного consumer:
+
+- `sortByCode: true` использует канонический snapshot без копирования;
+- `sortByCode: false` создаёт только неглубокие массивы ссылок, отсортированные по text;
+- строки, объекты элементов, плоский `items`, `chain` и metadata остаются общими.
+
+Таким образом, настройка сортировки принадлежит контролу или ракурсу, но разные настройки одного `service + target + serverFilter` не создают второй сетевой запрос и полную копию справочника в памяти.
 
 Настройки query:
 

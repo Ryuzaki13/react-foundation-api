@@ -25,7 +25,12 @@ export interface ODataCollectionConfig extends ODataServiceCollectionConfig {
 	 */
 	excludeEmpty?: true;
 	/**
-	 * Сортировка коллекции по code (`true`) или по text (`false`).
+	 * Сортировка consumer-представления по code (`true`) или по text (`false`).
+	 *
+	 * Параметр не разделяет общий Query snapshot: TanStack Query создаёт
+	 * observer-проекцию, и разные контролы одного справочника могут выбирать
+	 * свой порядок без повторной загрузки коллекции.
+	 *
 	 * По умолчанию `true`
 	 */
 	sortByCode?: boolean;
