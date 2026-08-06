@@ -9,7 +9,7 @@ import { getODataProjectAdapter, normalizeODataServiceName, resolveODataBaseUrl 
 import type { ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 const METADATA_VERSION_BUILD_ID = __APP_BUILD_ID__;
-const METADATA_VERSION_STALE_TIME = 1000 * 60 * 60 * 24;
+const METADATA_VERSION_STALE_TIME = 1000 * 60 * 60 * 2;
 
 export interface ODataMetadataVersionOptions extends Pick<ODataServiceConfig, "service"> {
 	staleTime?: number;
