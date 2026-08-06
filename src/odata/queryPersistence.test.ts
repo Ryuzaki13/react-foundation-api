@@ -93,7 +93,7 @@ describe("odata query persistence", () => {
 		const options = odataMetadataVersionQueryOptions({ service: "TEXT_APP_SRV" });
 
 		expect(options.queryKey).toEqual(["odata", "metadata-version", { service: "TEXT_APP_SRV", buildId: __APP_BUILD_ID__ }]);
-		expect(options.staleTime).toBe(1000 * 60 * 60 * 24);
+		expect(options.staleTime).toBe(1000 * 60 * 60 * 2);
 		expect(options.gcTime).toBe(Infinity);
 		expect(options.meta).toBe(persistedQueryMeta);
 		expect(options.enabled).toBe(true);
