@@ -1,0 +1,253 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Foundation API/Orchestration/Async Tasks" />
+
+# Асинхронные задачи через `@ryuzaki13/react-foundation-api/async`
+
+Модуль запускает независимые Promise-задачи, сохраняет связь результата с исходным элементом и формирует удобную сводку для UI/логов.
+
+## Какой runner выбрать
+
+| Сценарий | Функция |
+| --- | --- |
+| Задач немного, можно начать все одновременно, любая ошибка должна завершить batch исключением | `runAsyncTasks` |
+| Нужно ограничить число одновременных запросов, показать progress или поддержать abort | `runConcurrentTasks` |
+
+Обе функции выполняют задачи параллельно. Они не создают web workers и не ускоряют CPU-bound JavaScript: Promise-concurrency полезна прежде всего для I/O — HTTP, чтения storage и других async операций.
+
+## Импорт
+
+```ts
+import {
+	AsyncTasksError,
+	ConcurrencyPartialError,
+	runAsyncTasks,
+	runConcurrentTasks
+} from "@ryuzaki13/react-foundation-api/async";
+
+import type {
+	AsyncTask,
+	RunAsyncTasksResult,
+	RunConcurrentTasksOptions,
+	RunConcurrentTasksResult
+} from "@ryuzaki13/react-foundation-api/async";
+```
+
+Модуль не требует React или TanStack Query.
+
+## База: `async`, `Promise` и `await`
+
+`async`-функция всегда возвращает `Promise`. `await` приостанавливает только текущую async-функцию, а не весь browser thread:
+
+```ts
+async function loadName() {
+	const response = await fetch("/api/me");
+	return response.text();
+}
+
+const namePromise = loadName(); // Promise<string>.
+const name = await namePromise; // string.
+```
+
+Ошибку Promise обрабатывают через `try/catch` вокруг `await`.
+
+## `runAsyncTasks`
+
+### Быстрый старт
+
+```ts
+const result = await runAsyncTasks([
+	{ name: "profile", run: () => fetchProfile() },
+	{ name: "settings", run: () => fetchSettings() }
+]);
+
+console.log(result.summary);
+// { total: 2, succeeded: 2, failed: 0 }
+```
+
+Все `run` запускаются сразу через `Promise.all`. Важное отличие от обычного `Promise.all`: ошибка одной задачи перехватывается внутри runner-а, поэтому остальные задачи успевают завершиться. После завершения всего batch функция либо возвращает полный результат, либо бросает `AsyncTasksError` с тем же полным результатом.
+
+### Обработка частичного успеха
+
+```ts
+try {
+	const result = await runAsyncTasks(tasks, {
+		errorMessage: "Не все стартовые данные загрузились"
+	});
+	useData(result.successes);
+} catch (error) {
+	if (error instanceof AsyncTasksError) {
+		usePartialData(error.result.successes);
+		showErrors(error.result.errors);
+		return;
+	}
+
+	throw error;
+}
+```
+
+`AsyncTasksError.result` содержит:
+
+```ts
+type RunAsyncTasksResult<TResult> = {
+	settled: readonly AsyncTaskSettled<TResult>[];
+	successes: readonly AsyncTaskSuccess<TResult>[];
+	errors: readonly AsyncTaskFailure[];
+	summary: {
+		total: number;
+		succeeded: number;
+		failed: number;
+	};
+};
+```
+
+Элементы `settled`, `successes` и `errors` сохраняют порядок исходного массива. Каждый элемент содержит `index` и `name`.
+
+```ts
+if (item.status === "fulfilled") {
+	console.log(item.data);
+} else {
+	console.error(item.error);
+}
+```
+
+TypeScript сужает union по `status`.
+
+Пустой список возвращает успешный пустой результат. `runAsyncTasks` не имеет встроенного concurrency limit и AbortSignal.
+
+## `runConcurrentTasks`
+
+### Ограничение одновременных запросов
+
+```ts
+const result = await runConcurrentTasks(
+	userIds,
+	async (userId, { signal }) => {
+		const response = await fetch(`/api/users/${userId}`, { signal });
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		return response.json();
+	},
+	{ concurrency: 4 }
+);
+```
+
+Не более четырёх задач будут находиться в работе одновременно. Значение по умолчанию — `4`. Если элементов меньше, workers создаются только по числу элементов.
+
+`concurrency` обязан быть целым числом не меньше `1`:
+
+| Значение | Результат |
+| --- | --- |
+| `4` | Работает |
+| `1` | Последовательное выполнение |
+| `0`, `-1` | `RangeError` |
+| `1.5`, `NaN` | `TypeError` |
+
+### Ошибки отдельных элементов
+
+Runner не бросает ошибки отдельных задач. Он помещает их в `result.errors` и продолжает обработку:
+
+```ts
+const result = await runConcurrentTasks(inputs, task);
+
+if (result.errors.length > 0) {
+	for (const failure of result.errors) {
+		console.error(failure.index, failure.input, failure.error);
+	}
+}
+```
+
+Исключение самой функции возможно при невалидном `concurrency` или если callback `onProgress`/`onItemSuccess`/`onItemError` сам бросил ошибку. Callbacks должны быть безопасными и быстрыми.
+
+### Progress
+
+```ts
+await runConcurrentTasks(files, uploadFile, {
+	concurrency: 3,
+	onProgress(progress) {
+		setProgress(progress.percentage);
+	},
+	onItemSuccess(item) {
+		console.log("Загружен", item.input.name);
+	},
+	onItemError(item) {
+		console.error("Ошибка", item.input.name, item.error);
+	}
+});
+```
+
+`onProgress` вызывается после каждой завершённой задачи. В первом вызове процент уже больше нуля; отдельного начального события `0%` нет.
+
+```ts
+type ConcurrentTaskProgress<TInput, TResult> = {
+	total: number;
+	completed: number;
+	succeeded: number;
+	failed: number;
+	running: number;
+	pending: number;
+	percentage: number;
+	aborted: boolean;
+	lastSettled?: ConcurrentTaskSettled<TInput, TResult>;
+};
+```
+
+`percentage` округляется через `Math.round`.
+
+### Abort
+
+```ts
+const controller = new AbortController();
+
+const promise = runConcurrentTasks(urls, async (url, { signal }) => {
+	const response = await fetch(url, { signal });
+	return response.text();
+}, {
+	concurrency: 2,
+	signal: controller.signal
+});
+
+controller.abort();
+const result = await promise;
+```
+
+После abort новые задачи не стартуют. Уже начатая операция прервётся только если сама использует переданный `signal`. Runner ждёт завершения начатых tasks и возвращает:
+
+- `aborted: true`;
+- обработанные элементы в `settled`;
+- не начатые элементы в `unprocessed`.
+
+Abort не является ошибкой runner-а и сам по себе не приводит к `throw`.
+
+### Порядок результата
+
+Tasks могут завершаться в любом порядке, callbacks идут в порядке фактического завершения. Итоговые `settled`, `successes`, `errors` и `unprocessed` собираются по исходным индексам, поэтому результат детерминирован относительно input.
+
+## `ConcurrencyPartialError`
+
+`runConcurrentTasks` сам не создаёт этот error. Класс нужен, если слой приложения хочет преобразовать частичный результат в исключение:
+
+```ts
+const result = await runConcurrentTasks(inputs, task);
+
+if (result.errors.length > 0 || result.aborted) {
+	throw new ConcurrencyPartialError("Batch выполнен частично", result);
+}
+```
+
+Не путайте его с `AsyncTasksError`: первый создаёт consumer по своей policy, второй автоматически бросает `runAsyncTasks`.
+
+## Практические рекомендации
+
+- Не ставьте слишком большой concurrency: browser, proxy и backend имеют свои лимиты.
+- Для write-операций продумайте идемпотентность: retry может повторить уже выполненное действие.
+- Не меняйте input objects внутри task, если те же значения использует UI.
+- Обрабатывайте `unknown` error через безопасный normalizer.
+- Не используйте runner вместо TanStack Query cache для одного и того же resource.
+- Если задача зависит от результата предыдущей, это не независимый batch: выполните зависимые шаги последовательно.
+
+## Полный API
+
+| Группа | Exports |
+| --- | --- |
+| All-at-once | `runAsyncTasks`, `AsyncTasksError`, `AsyncTask`, `AsyncTaskSuccess`, `AsyncTaskFailure`, `AsyncTaskSettled`, `RunAsyncTasksResult`, `RunAsyncTasksOptions` |
+| Bounded concurrency | `runConcurrentTasks`, `ConcurrencyPartialError`, `ConcurrentTaskContext`, `ConcurrentTaskFn`, `ConcurrentTaskSuccess`, `ConcurrentTaskError`, `ConcurrentTaskSettled`, `ConcurrentTaskUnprocessed`, `ConcurrentTaskProgress`, `RunConcurrentTasksOptions`, `RunConcurrentTasksResult` |

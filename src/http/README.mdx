@@ -1,0 +1,221 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Foundation API/Transport/HTTP" />
+
+# Обычный HTTP через `@ryuzaki13/react-foundation-api/http`
+
+Модуль выполняет нейтральные HTTP/REST запросы и создаёт функции, совместимые с TanStack Query. Внешний payload остаётся `unknown`, пока consumer явно не проверит его через `parse`.
+
+## Содержание
+
+- [Когда использовать](#когда-использовать)
+- [Импорт](#импорт)
+- [`httpFetch`](#httpfetch)
+- [`httpFetchPayload`](#httpfetchpayload)
+- [`httpJsonQueryFn`](#httpjsonqueryfn)
+- [`httpJsonMutationFn`](#httpjsonmutationfn)
+- [`RouteError`](#routeerror)
+- [Ошибки, runtime и безопасность](#ошибки-runtime-и-безопасность)
+- [Полный API](#полный-api)
+
+## Когда использовать
+
+```text
+обычный REST/HTTP ──► /http
+SAP Gateway/OData ──► /odata
+```
+
+`http` не добавляет SAP headers, `credentials: include`, X-CSRF token, SSO recovery, OData V2 headers и не снимает envelope `{ d: { results } }`. Для SAP/OData используйте [`/odata`](../odata/README.mdx).
+
+## Импорт
+
+```ts
+import {
+	httpFetch,
+	httpFetchPayload,
+	httpJsonMutationFn,
+	httpJsonQueryFn,
+	RouteError
+} from "@ryuzaki13/react-foundation-api/http";
+
+import type {
+	HttpMutationFnOptions,
+	HttpQueryFnOptions,
+	HttpRequestOptions
+} from "@ryuzaki13/react-foundation-api/http";
+```
+
+Нужны глобальные Web Fetch API: `fetch`, `Request`, `Response`, `Headers`, `URL`.
+
+## `httpFetch`
+
+```ts
+const response = await httpFetch("/health", {
+	baseUrl: "https://api.example.com",
+	init: {
+		method: "GET",
+		headers: { Accept: "text/plain" }
+	}
+});
+
+console.log(await response.text());
+```
+
+Функция возвращает исходный `Response`, если `response.ok === true`. Body ещё не прочитан.
+
+Для string input URL строится простой конкатенацией:
+
+```text
+baseUrl + input
+```
+
+Helper не исправляет slash:
+
+```ts
+// Правильно.
+{ baseUrl: "https://api.example.com", input: "/users" }
+
+// Получится https://api.example.comusers — неверно.
+{ baseUrl: "https://api.example.com", input: "users" }
+```
+
+Если input является `Request` или `URL`, `baseUrl` игнорируется. Это не proxy/url resolver.
+
+## `httpFetchPayload`
+
+```ts
+const payload: unknown = await httpFetchPayload("/api/profile");
+```
+
+Правила parser-а:
+
+| Response | Результат |
+| --- | --- |
+| status `204` или `205` | `null` |
+| `Content-Type` содержит `application/json` | `response.json()` |
+| любой другой content type | `response.text()` |
+
+Результат намеренно `unknown`. Generic type не может проверить данные, пришедшие по сети:
+
+```ts
+function parseProfile(value: unknown): Profile {
+	if (!isProfile(value)) throw new Error("Некорректный Profile payload");
+	return value;
+}
+
+const profile = parseProfile(await httpFetchPayload("/api/profile"));
+```
+
+Если сервер отдаёт JSON без корректного `Content-Type`, модуль вернёт JSON как string. Исправьте backend или разберите string на своей boundary.
+
+## `httpJsonQueryFn`
+
+Factory возвращает async-функцию с формой TanStack Query `queryFn`:
+
+```ts
+const loadProfile = httpJsonQueryFn("/api/profile", {
+	baseUrl: "https://api.example.com",
+	parse: parseProfile,
+	swCache: "ttl=10m;name=profile"
+});
+
+const profile = await loadProfile({ signal });
+```
+
+С React Query:
+
+```tsx
+const profileQuery = useQuery({
+	queryKey: ["profile", userId],
+	queryFn: httpJsonQueryFn(`/api/users/${userId}`, {
+		parse: parseProfile
+	})
+});
+```
+
+Factory:
+
+- использует `init.signal`, если он задан явно;
+- иначе подставляет signal, переданный TanStack Query;
+- добавляет `x-sw-cache`, только если `swCache` truthy;
+- вызывает обязательный `parse(payload)` после успешного запроса.
+
+Header `x-sw-cache` — только protocol с Service Worker. Без соответствующего SW он не создаёт cache.
+
+`parse` может вернуть преобразованную domain model, но обычно лучше ограничиться runtime validation и вынести бизнес-mapping владельцу entity.
+
+## `httpJsonMutationFn`
+
+```ts
+type CreateUserInput = { name: string };
+
+const createUser = httpJsonMutationFn<CreateUserInput, User>("/api/users", {
+	method: "POST",
+	mapBody: (input) => ({ displayName: input.name }),
+	parse: parseUser
+});
+
+const user = await createUser({ name: "Анна" });
+```
+
+С `useMutation`:
+
+```tsx
+const mutation = useMutation({ mutationFn: createUser });
+mutation.mutate({ name: "Анна" });
+```
+
+Поведение:
+
+1. Вычисляет body через `mapBody(input)` или использует input.
+2. Сериализует body через `JSON.stringify`.
+3. Использует method `POST` по умолчанию; поддерживаются `POST`, `PUT`, `PATCH`, `DELETE`.
+4. Добавляет `Content-Type: application/json`, только если header ещё не задан.
+5. Выполняет запрос и передаёт payload в обязательный `parse`.
+
+Сигнатура mutation function также допускает второй `AbortSignal` при ручном вызове. Стандартный `useMutation` TanStack Query не передаёт signal автоматически. Если `options.init.signal` уже задан, второй signal не заменит его.
+
+`JSON.stringify` может бросить ошибку для `BigInt`/циклического объекта. `undefined` body сериализуется в `undefined`; убедитесь, что это соответствует endpoint.
+
+## HTTP errors
+
+Для `response.ok === false` обе низкоуровневые функции бросают обычный `Error`:
+
+```text
+HTTP error: <message>
+```
+
+Если error body — непустой text, он становится message. Для JSON error object поля `message`, `error` и `details` не извлекаются; fallback — `<status> <statusText>`.
+
+Network error/CORS/abort от глобального `fetch` пробрасывается без обёртки.
+
+## `RouteError`
+
+```ts
+throw new RouteError(404);
+```
+
+Это маленький `Error` с числовым полем `status` и пустым message. `httpFetch` сам его не создаёт. Класс нужен для routing/error-boundary policy приложения, если оно договорилось понимать такой error.
+
+## Ошибки, runtime и безопасность
+
+- TypeScript generic не валидирует сеть; используйте `parse`/schema guard.
+- `baseUrl` и path не нормализуются и не кодируются.
+- Authorization, cookies, CORS и retry задаёт consumer через `init` или внешний слой.
+- Модуль не делает timeout. Для него используйте `AbortController`.
+- Не помещайте token/secret в query string и cache key.
+- `x-sw-cache` для персональных данных требует изолированной cache policy.
+- На SSR абсолютный/относительный URL и cookies должны быть настроены server runtime-ом.
+
+## Полный API
+
+| Export | Результат |
+| --- | --- |
+| `httpFetch` | Успешный `Response` |
+| `httpFetchPayload` | JSON/text/`null` как `unknown` |
+| `httpJsonQueryFn` | Query-compatible async function |
+| `httpJsonMutationFn` | Mutation-compatible async function |
+| `RouteError` | Error с `status` |
+| `HttpRequestOptions` | `baseUrl` и `init` |
+| `HttpQueryFnOptions` | Request options + `swCache` + `parse` |
+| `HttpMutationFnOptions` | Request options + method/body mapper/parse |

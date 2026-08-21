@@ -1,4 +1,4 @@
-import { type CollectionItem } from "@ryuzaki13/react-foundation-lib/odata";
+import { type CollectionItem } from "@ryuzaki13/react-foundation-lib/odata-service";
 import { logError } from "@ryuzaki13/react-foundation-lib/utils";
 
 import { odataFetch, type ODataFetchOptions } from "./odataFetch";

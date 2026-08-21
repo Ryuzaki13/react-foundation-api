@@ -4,7 +4,7 @@ import { buildEntityPath, type ODataServiceConfig, type ODataValue } from "@ryuz
 
 import { useODataMetadata } from "./useODataMetadata";
 
-import type { CollectionPair } from "@ryuzaki13/react-foundation-lib/odata";
+import type { CollectionPair } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 const throwErrorText = "Использование actions недопустимо до окончания загрузки metadata";
 

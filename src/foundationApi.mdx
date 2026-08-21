@@ -1,0 +1,123 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Foundation API/Обзор" />
+
+# `@ryuzaki13/react-foundation-api`
+
+Пакет соединяет приложение с внешними API. Он содержит transport, интеграцию с TanStack Query, SAP/OData V2 infrastructure и небольшие orchestration helpers. Документ рассчитан на разработчика, который видит только опубликованный пакет и его типы.
+
+## Подключение
+
+```bash
+npm install @ryuzaki13/react-foundation-api @ryuzaki13/react-foundation-lib
+```
+
+Корневого импорта нет. Всегда указывайте точный subpath:
+
+```ts
+import { httpFetchPayload } from "@ryuzaki13/react-foundation-api/http";
+import { useResourceQuery } from "@ryuzaki13/react-foundation-api/resource";
+import { useODataMetadataQuery } from "@ryuzaki13/react-foundation-api/odata";
+```
+
+## Где находится пакет в архитектуре
+
+```text
+host application: entities / features / widgets / pages
+                           │
+                           ▼
+          @ryuzaki13/react-foundation-api
+           transport + query orchestration
+                           │
+                           ▼
+          @ryuzaki13/react-foundation-lib
+       pure helpers + metadata + query policies
+```
+
+`foundation-api` не должен знать конкретную бизнес-сущность, экран или UI-компонент. DTO/domain mapping конкретного проекта остаётся у host-приложения. UI primitives находятся в `@ryuzaki13/react-foundation-ui`.
+
+## Как выбрать entrypoint
+
+| Нужно сделать | Entrypoint | Важная граница |
+| --- | --- | --- |
+| Вызвать обычный JSON REST endpoint | `http` | Нет SAP/SSO/X-CSRF политики |
+| Вызвать SAP Gateway/OData V2 | `odata` | Metadata, envelope, SSO и X-CSRF принадлежат этому слою |
+| Описать произвольные queries/mutations | `resource` | Transport передаётся операциями |
+| Описать сохранённые records с фиксированными capability | `persisted` | Только list/latest/history/save/create/delete |
+| Подключить функцию вида `fn({ data })` | `server-fn` | Это adapter операции, не сервер и не security boundary |
+| Выполнить пакет независимых задач | `async` | Выберите all-at-once или bounded concurrency |
+| Прочитать ADT transport XML | `adt` | Endpoint `/sap/bc/adt`, XML |
+| Прочитать UI2 workbench/customizing requests | `transport` | Это SAP transport requests, а не generic HTTP transport |
+| Отправить error-report draft | `error-report` | Сбор/хранение draft принадлежит `foundation-lib` |
+
+## Самая частая ошибка: одинаковые слова, разные уровни
+
+### `http` и `odata`
+
+`http` подходит для нейтрального REST. Он не получает CSRF token, не распознаёт SAML form и не снимает OData V2 envelope. Для SAP Gateway используйте `odata`, даже если технически запрос тоже выполняется через `fetch`.
+
+### `resource` и `persisted`
+
+`resource` позволяет задавать любые имена операций: например `search`, `details`, `archive`. `persisted` — специализированный facade для сохранённых записей с именами `list`, `latest`, `history`, `save`, `create`, `delete`.
+
+### `adt` и `transport`
+
+Оба entrypoint читают SAP transports, но из разных API:
+
+| Entrypoint | Endpoint/format | Результат |
+| --- | --- | --- |
+| `adt` | `/sap/bc/adt/cts/transports`, XML | Общий `UserTransport` из ADT header |
+| `transport` | UI2 OData endpoints, JSON | Нормализованные workbench/customizing requests |
+
+## TanStack Query: кто чем владеет
+
+`resource`, `persisted` и часть `odata` работают внутри `QueryClientProvider`. Query key определяет identity кеша; `staleTime` — свежесть; `gcTime` — время хранения неиспользуемого query; `AbortSignal` позволяет отменять чтение. Mutation не обновляет все связанные query автоматически: это делает явно выбранная cache strategy.
+
+```tsx
+import { QueryClientProvider } from "@tanstack/react-query";
+import { createQueryClient } from "@ryuzaki13/react-foundation-lib/query-client";
+
+const queryClient = createQueryClient();
+
+export function App() {
+	return <QueryClientProvider client={queryClient}>{/* приложение */}</QueryClientProvider>;
+}
+```
+
+Не создавайте новый `QueryClient` при каждом render.
+
+## Runtime
+
+| API | Browser | Server runtime |
+| --- | :---: | :---: |
+| `async` и pure normalization | Да | Да |
+| `http` | Да | Да, если доступны Web Fetch API |
+| pure `resource` factories | Да | Да |
+| React hooks | Да | Только в поддерживаемом React runtime/provider |
+| OData SSO recovery | Да | Нет: использует `window`, `document`, iframe |
+| SAP transport fetchers | Да | Только при корректном fetch/proxy/cookie окружении |
+
+OData transport использует compile-time constants и проектный adapter. Host-сборка должна предоставлять ожидаемую конфигурацию; подробности приведены на странице OData.
+
+## Service Worker cache
+
+Некоторые query factories передают строку политики через header `x-sw-cache`. Сам header ничего не кеширует: Service Worker host-приложения должен понимать тот же protocol.
+
+```text
+off
+ttl=24h
+ttl=10m;max=200;name=ui
+bust=24h;name=ref
+```
+
+`bust` означает принудительное обновление сетевого snapshot в соответствующей cache policy. Не используйте SW cache для персональных/секретных payload без отдельной модели изоляции.
+
+## Каталог страниц
+
+| Область | Документы |
+| --- | --- |
+| Transport | [HTTP](./http/README.mdx), [OData](./odata/README.mdx), [ADT](./adt/README.mdx), [SAP Transport Requests](./transport/README.mdx) |
+| Query infrastructure | [Resource](./resource/README.mdx), [Persisted](./persisted/README.mdx), [Server Function](./server-fn/README.mdx) |
+| Orchestration и diagnostics | [Async](./async/README.mdx), [Error Report](./error-report/README.mdx) |
+
+Каждая страница содержит точный import, пошаговый guide, runtime/lifecycle, ошибки и таблицу публичных exports. Не импортируйте файл глубоким путём, если его символ не опубликован соответствующим entrypoint.

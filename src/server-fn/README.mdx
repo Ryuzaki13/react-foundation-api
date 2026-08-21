@@ -1,0 +1,194 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Foundation API/Adapters/Server Function" />
+
+# Server-function adapters через `@ryuzaki13/react-foundation-api/server-fn`
+
+Модуль адаптирует функцию с публичной формой `serverFn({ data })` к query/mutation operation из [`/resource`](../resource/README.mdx). Сам пакет не импортирует TanStack Start и не запускает сервер.
+
+## Модель
+
+```text
+scope + args/input
+        │ buildData
+        ▼
+     { data }
+        │ serverFn или custom executor
+        ▼
+     response
+        │ optional transform
+        ▼
+ resource operation result
+```
+
+Подходит любая async-функция такого контракта:
+
+```ts
+type ServerFnTransport<TData, TResponse> = (
+	request: { data: TData }
+) => Promise<TResponse>;
+```
+
+Название `server-fn` описывает типичный источник функции. Оно не гарантирует server-only выполнение и не создаёт security boundary.
+
+## Импорт
+
+```ts
+import {
+	createServerFnMutationOperation,
+	createServerFnQueryOperation
+} from "@ryuzaki13/react-foundation-api/server-fn";
+
+import type {
+	ServerFnTransport,
+	ServerFnTransportExecutor,
+	ServerFnTransportExecutorContext,
+	ServerFnTransportRequest
+} from "@ryuzaki13/react-foundation-api/server-fn";
+```
+
+Нужен `@tanstack/react-query`; созданные operations обычно подключаются через `/resource` или `/persisted` descriptor.
+
+## Query operation
+
+Предположим, сгенерированная framework-функция принимает:
+
+```ts
+type LoadOrdersData = {
+	companyId: string;
+	search: string;
+};
+
+declare const loadOrdersServerFn: ServerFnTransport<
+	LoadOrdersData,
+	{ items: OrderDto[] }
+>;
+```
+
+Adapter:
+
+```ts
+const searchOrdersOperation = createServerFnQueryOperation({
+	serverFn: loadOrdersServerFn,
+	buildData: (companyId: string, args: { search: string }) => ({
+		companyId,
+		search: args.search
+	}),
+	transform: (response) => response.items.map(mapOrderDto),
+	staleTime: 60_000,
+	gcTime: 5 * 60_000,
+	isEnabled: (companyId, args) => Boolean(companyId && args.search.trim())
+});
+```
+
+`buildData` получает валидный scope и query args. `transform` получает response и `{ scope, args }`; без transform result равен response.
+
+Созданный объект соответствует `ResourceQueryOperation`:
+
+- `execute({ scope, args, client, signal })`;
+- optional `isEnabled`;
+- optional `staleTime`;
+- optional `gcTime`.
+
+## Mutation operation
+
+```ts
+declare const saveOrderServerFn: ServerFnTransport<
+	{ companyId: string; order: SaveOrderDto },
+	{ order: OrderDto }
+>;
+
+const saveOrderOperation = createServerFnMutationOperation({
+	serverFn: saveOrderServerFn,
+	buildData: (companyId: string, input: SaveOrderInput) => ({
+		companyId,
+		order: mapSaveOrder(input)
+	}),
+	transform: (response) => mapOrderDto(response.order),
+	cacheStrategy: createInvalidateResourceScopeCacheStrategy()
+});
+```
+
+`transform` получает `{ scope, input }`. `cacheStrategy` прикрепляется к operation и выполняется владельцем resource mutation после успешного ответа.
+
+Mutation operation не имеет `AbortSignal` в generic resource contract. Custom executor получает `{ client }` без signal.
+
+## Подключение к resource descriptor
+
+```ts
+const ordersResource = createResourceDescriptor({
+	namespace: "sales",
+	resource: "orders",
+	operations: {
+		queries: { search: searchOrdersOperation },
+		mutations: { save: saveOrderOperation }
+	}
+});
+
+const query = useResourceQuery(
+	ordersResource,
+	"search",
+	companyId,
+	{ search }
+);
+```
+
+`server-fn` не экспортирует resource hooks повторно. Импортируйте их из `@ryuzaki13/react-foundation-api/resource`.
+
+## Custom executor
+
+По умолчанию adapter вызывает только:
+
+```ts
+serverFn({ data })
+```
+
+`QueryClient` и `AbortSignal` не передаются внутрь `serverFn`. Если transport/framework умеет использовать дополнительный context, задайте executor:
+
+```ts
+const executor: ServerFnTransportExecutor<Input, Output> = async (
+	serverFn,
+	request,
+	{ signal }
+) => {
+	if (signal?.aborted) throw signal.reason;
+	return serverFn(request);
+};
+
+const operation = createServerFnQueryOperation({
+	serverFn,
+	buildData,
+	executor
+});
+```
+
+Executor получает саму функцию, нормализованный request `{ data }` и `{ client, signal? }`. Он полезен для tracing, тестов и framework adapter-а. Не используйте его для бизнес-логики конкретной entity.
+
+## Типичные ошибки
+
+### Передавать args напрямую
+
+Неверно предполагать, что query args автоматически становятся data. Их явно преобразует `buildData`, потому что scope/args и transport DTO — разные контракты.
+
+### Ожидать автоматическую отмену
+
+Default executor не передаёт signal в функцию, поскольку её публичный contract содержит только `{ data }`. Отмена TanStack Query остановит дальнейшее использование результата на уровне query, но transport должен поддерживать abort отдельно.
+
+### Считать функцию доверенной
+
+Если функция вызывается из browser bundle, её input контролирует пользователь. Backend обязан повторно проверить authentication, authorization и payload schema.
+
+### Использовать без descriptor-а
+
+Factory возвращает operation, а не готовый React hook. Подключите её к resource/persisted descriptor или вызовите `execute` через корректный orchestration layer.
+
+## Полный API
+
+| Export | Назначение |
+| --- | --- |
+| `createServerFnQueryOperation` | Создаёт read operation, optional transform/lifetime/isEnabled |
+| `createServerFnMutationOperation` | Создаёт write operation, optional transform/cache strategy |
+| `ServerFnTransport` | Контракт функции `(request) => Promise` |
+| `ServerFnTransportRequest` | Обёртка `{ data }` |
+| `ServerFnTransportExecutor` | Контракт custom execution |
+| `ServerFnTransportExecutorContext` | `QueryClient` и optional signal |

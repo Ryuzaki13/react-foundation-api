@@ -1,7 +1,7 @@
 import { compareStrings } from "@ryuzaki13/react-foundation-lib/string-comparison";
 
 import type { ODataCollectionResult } from "./useODataCollectionQuery";
-import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata";
+import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 /**
  * Разделяет одну text-проекцию между всеми observer одного Query snapshot.

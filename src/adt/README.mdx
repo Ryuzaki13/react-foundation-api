@@ -1,0 +1,164 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Foundation API/SAP/ADT Transports" />
+
+# SAP ADT transports через `@ryuzaki13/react-foundation-api/adt`
+
+Модуль получает transport requests текущего пользователя из SAP ADT endpoint и преобразует XML в простой массив объектов.
+
+## Содержание
+
+- [Когда использовать](#когда-использовать)
+- [Установка и импорт](#установка-и-импорт)
+- [Быстрый старт](#быстрый-старт)
+- [`fetchUserTransports`](#fetchusertransports)
+- [`parseUserTransportsXml`](#parseusertransportsxml)
+- [Формат результата](#формат-результата)
+- [Ошибки и ограничения](#ошибки-и-ограничения)
+- [Полный API](#полный-api)
+
+## Когда использовать
+
+Используйте `adt`, если backend доступен по `/sap/bc/adt/cts/transports` и возвращает ADT XML. Если нужны отдельные UI2 списки workbench/customizing в JSON, используйте [`@ryuzaki13/react-foundation-api/transport`](../transport/README.mdx).
+
+```text
+SAP ADT XML
+    │
+    ▼
+parseUserTransportsXml
+    │
+    ▼
+UserTransport[]
+```
+
+## Установка и импорт
+
+```bash
+npm install @ryuzaki13/react-foundation-api @ryuzaki13/react-foundation-lib fast-xml-parser
+```
+
+```ts
+import { fetchUserTransports, parseUserTransportsXml } from "@ryuzaki13/react-foundation-api/adt";
+
+import type { UserTransport } from "@ryuzaki13/react-foundation-api/adt";
+```
+
+## Быстрый старт
+
+```ts
+async function loadTransports() {
+	try {
+		const transports = await fetchUserTransports();
+		return transports;
+	} catch (error) {
+		console.error("Не удалось получить transports", error);
+		return [];
+	}
+}
+```
+
+`fetchUserTransports` возвращает Promise. Пока он выполняется, данных ещё нет; ошибку нужно обработать через `try/catch`, TanStack Query или error boundary владельца сценария.
+
+## `fetchUserTransports`
+
+Функция выполняет GET:
+
+```text
+/sap/bc/adt/cts/transports?_action=FIND&trfunction=K
+```
+
+Запрос отправляется через SAP/OData transport пакета с:
+
+- `Accept: application/xml, text/xml, */*`;
+- cookies через `credentials: include`;
+- SAP language/client и SSO policy общего OData transport;
+- пустым base URL, потому что ADT endpoint уже содержит `/sap/...`.
+
+Ответ читается как text и передаётся `parseUserTransportsXml`.
+
+Если сервер вместо XML вернул HTML login/error page, функция выбросит ошибку. Это защищает UI от ситуации, когда HTML ошибочно принимается за пустой список transports.
+
+## `parseUserTransportsXml`
+
+Parser можно использовать отдельно, например в тесте или при получении XML другим transport:
+
+```ts
+const xml = `
+<root>
+	<CTS_REQ_HEADER>
+		<TRKORR>DEVK900001</TRKORR>
+		<AS4TEXT>Исправление отчёта</AS4TEXT>
+		<AS4USER>IVANOV</AS4USER>
+		<TARSYSTEM>QAS</TARSYSTEM>
+		<TRFUNCTION>K</TRFUNCTION>
+		<TRSTATUS>D</TRSTATUS>
+	</CTS_REQ_HEADER>
+</root>`;
+
+const transports = parseUserTransportsXml(xml);
+```
+
+Алгоритм:
+
+1. Пустая или состоящая из пробелов строка превращается в `[]`.
+2. XML разбирается `fast-xml-parser`.
+3. Во вложенной структуре рекурсивно ищутся узлы `CTS_REQ_HEADER`.
+4. Поля преобразуются в `UserTransport`.
+5. Записи без непустого `TRKORR` отбрасываются.
+6. Дубликаты `transportNo` удаляются; сохраняется первая запись.
+7. Если header-узлы не найдены, parser ищет вложенные `TRKORR` и создаёт минимальные записи.
+
+Parser делает `trim` строковых полей, но не декодирует бизнес-значения статуса/function и не проверяет их по справочнику SAP.
+
+Некорректный XML может привести к исключению parser-а. Функция не заменяет его пустым массивом: повреждённый ответ должен быть виден как ошибка.
+
+## Формат результата
+
+```ts
+interface UserTransport {
+	transportNo: string;
+	description?: string;
+	owner?: string;
+	targetSystem?: string;
+	function?: string;
+	status?: string;
+	parentTransportNo?: string;
+}
+```
+
+Соответствие XML:
+
+| XML | Поле | Значение |
+| --- | --- | --- |
+| `TRKORR` | `transportNo` | Обязательный номер transport |
+| `AS4TEXT` | `description` | Описание |
+| `AS4USER` | `owner` | Владелец |
+| `TARSYSTEM` | `targetSystem` | Целевая система |
+| `TRFUNCTION` | `function` | SAP transport function |
+| `TRSTATUS` | `status` | SAP status |
+| `STRKORR` | `parentTransportNo` | Родительский request/task |
+
+Optional-поле может быть `undefined`. Проверяйте его перед отображением:
+
+```ts
+const label = transport.description
+	? `${transport.transportNo} — ${transport.description}`
+	: transport.transportNo;
+```
+
+## Ошибки и ограничения
+
+- `fast-xml-parser` должен быть установлен в host, использующем этот entrypoint.
+- Это не generic ADT client: endpoint и query parameters зафиксированы.
+- Функция не создаёт/не освобождает transport и не проверяет authorization.
+- SSO/cookies требуют browser/proxy окружения SAP. На server runtime поведение зависит от переданного глобального `fetch` и cookie boundary.
+- HTML-response, HTTP error и XML parse error не превращаются в `[]`.
+- Дедупликация выполняется только по `transportNo` и сохраняет первую найденную запись.
+
+## Полный API
+
+| Export | Назначение |
+| --- | --- |
+| `fetchUserTransports` | Загружает и разбирает ADT XML |
+| `parseUserTransportsXml` | Преобразует XML string в массив |
+| `UserTransport` | Контракт результата |

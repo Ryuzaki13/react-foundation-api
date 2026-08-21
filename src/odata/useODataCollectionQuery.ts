@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 
-import { buildSeparatedArrays, type CollectionItem, type CollectionPair } from "@ryuzaki13/react-foundation-lib/odata";
+import { buildSeparatedArrays, type CollectionItem, type CollectionPair } from "@ryuzaki13/react-foundation-lib/odata-service";
 import { persistedQueryMeta } from "@ryuzaki13/react-foundation-lib/query-client";
 import { useQuery, useQueryClient, UseQueryResult } from "@tanstack/react-query";
 

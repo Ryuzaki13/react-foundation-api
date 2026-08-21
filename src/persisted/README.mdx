@@ -1,0 +1,454 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Foundation API/Query/Persisted Records" />
+
+# Сохранённые записи через `@ryuzaki13/react-foundation-api/persisted`
+
+`persisted` — специализированный слой поверх TanStack Query для данных, которые пользователь сохраняет и позднее восстанавливает: presets, variants, view configs и другие versioned records.
+
+## Ментальная модель
+
+```text
+PersistedResourceDescriptor
+  ├─ identity: namespace + resource + normalized scope
+  ├─ read capability: list | latest | history
+  ├─ write capability: save | create | delete
+  ├─ transport operation: REST | OData | server-fn | custom
+  └─ cache strategy после успешной mutation
+```
+
+Capability optional: resource не обязан поддерживать все шесть операций. TypeScript разрешит соответствующий hook только когда operation присутствует в descriptor; runtime также выдаёт понятную ошибку при неправильном объекте.
+
+## `persisted` или `resource`
+
+| Нужна модель | Использовать |
+| --- | --- |
+| Фиксированные сохранённые records: list/latest/history/save/create/delete | `/persisted` |
+| Произвольные названия и semantics операций | [`/resource`](../resource/README.mdx) |
+
+`persisted` построен на тех же принципах keys/cache, но намеренно не является универсальным CRUD.
+
+## Установка и provider
+
+```bash
+npm install @ryuzaki13/react-foundation-api @ryuzaki13/react-foundation-lib @tanstack/react-query react
+```
+
+Hooks требуют `QueryClientProvider`. Descriptor и operations создавайте на module level, чтобы ссылки были стабильными.
+
+## Импорт
+
+```ts
+import {
+	applyPersistedCacheStrategy,
+	composePersistedCacheStrategies,
+	createInvalidatePersistedScopeCacheStrategy,
+	createPersistedJsonCodec,
+	createPersistedODataMutationOperation,
+	createPersistedODataQueryOperation,
+	createPersistedODataReadOperation,
+	createPersistedRecordKeys,
+	createPersistedResourceDescriptor,
+	createPersistedRestMutationOperation,
+	createPersistedRestQueryOperation,
+	createSetPersistedQueryDataCacheStrategy,
+	getPersistedHistoryData,
+	getPersistedLatestData,
+	getPersistedListData,
+	parsePersistedJson,
+	stringifyPersistedJson,
+	usePersistedCreateMutation,
+	usePersistedDeleteMutation,
+	usePersistedHistoryQuery,
+	usePersistedLatestQuery,
+	usePersistedListQuery,
+	usePersistedSaveMutation
+} from "@ryuzaki13/react-foundation-api/persisted";
+```
+
+## Пошаговый REST пример
+
+### 1. Контракты
+
+```ts
+type ViewScope = {
+	userId: string;
+	viewId: string;
+};
+
+type ViewConfig = {
+	columns: string[];
+	compact: boolean;
+};
+
+type SavedViewRecord = {
+	id: string;
+	createdUtc: string;
+	payload: string;
+};
+
+type SaveViewInput = {
+	payload: ViewConfig;
+};
+```
+
+Внешний record и распарсенный config — разные типы. TypeScript не проверяет network payload автоматически.
+
+### 2. Runtime parsers
+
+```ts
+function parseRecord(value: unknown): SavedViewRecord {
+	if (!isSavedViewRecord(value)) {
+		throw new Error("Некорректный SavedViewRecord payload");
+	}
+
+	return value;
+}
+
+function parseRecordList(value: unknown): SavedViewRecord[] {
+	if (!Array.isArray(value)) throw new Error("Ожидался массив records");
+	return value.map(parseRecord);
+}
+```
+
+### 3. Operations
+
+```ts
+const listOperation = createPersistedRestQueryOperation<
+	ViewScope,
+	void,
+	SavedViewRecord[]
+>({
+	buildUrl: (scope) =>
+		`/api/users/${encodeURIComponent(scope.userId)}/views/${encodeURIComponent(scope.viewId)}`,
+	parseResponse: parseRecordList,
+	staleTime: 60_000
+});
+
+const latestOperation = createPersistedRestQueryOperation<
+	ViewScope,
+	void,
+	SavedViewRecord,
+	ViewConfig | null
+>({
+	buildUrl: (scope) =>
+		`/api/users/${encodeURIComponent(scope.userId)}/views/${encodeURIComponent(scope.viewId)}/latest`,
+	parseResponse: parseRecord,
+	transform: (record) => parsePersistedJson<ViewConfig>(record.payload)
+});
+
+const saveOperation = createPersistedRestMutationOperation<
+	ViewScope,
+	SaveViewInput,
+	SavedViewRecord
+>({
+	buildUrl: (scope) =>
+		`/api/users/${encodeURIComponent(scope.userId)}/views/${encodeURIComponent(scope.viewId)}`,
+	method: "PUT",
+	bodyMapper: (_scope, input) => ({
+		payload: stringifyPersistedJson(input.payload)
+	}),
+	parseResponse: parseRecord,
+	cacheStrategy: createInvalidatePersistedScopeCacheStrategy()
+});
+```
+
+### 4. Descriptor
+
+```ts
+const viewResource = createPersistedResourceDescriptor({
+	namespace: "view-config",
+	resource: "view",
+	normalizeScope: (scope: ViewScope | null | undefined) => ({
+		userId: scope?.userId.trim() ?? "",
+		viewId: scope?.viewId.trim() ?? ""
+	}),
+	isEnabled: (scope) => Boolean(scope?.userId && scope?.viewId),
+	getScopeError: () => "Не определён пользователь или представление",
+	transport: {
+		list: listOperation,
+		latest: latestOperation,
+		save: saveOperation
+	}
+});
+```
+
+`normalizeScope` изменяет только cache identity. В `buildUrl`/`execute` передаётся исходный scope.
+
+### 5. Hooks
+
+```tsx
+const scope = { userId, viewId };
+const latestQuery = usePersistedLatestQuery(viewResource, scope);
+const listQuery = usePersistedListQuery(viewResource, scope);
+const saveMutation = usePersistedSaveMutation(viewResource, scope);
+
+saveMutation.mutate({
+	payload: { columns: ["name", "status"], compact: true }
+});
+```
+
+Нельзя вызвать `usePersistedHistoryQuery` для этого descriptor, пока capability `history` не добавлена.
+
+## Read capabilities
+
+| Capability | Hook | Imperative helper | Args |
+| --- | --- | --- | --- |
+| `list` | `usePersistedListQuery` | `getPersistedListData` | нет (`void`) |
+| `latest` | `usePersistedLatestQuery` | `getPersistedLatestData` | нет (`void`) |
+| `history` | `usePersistedHistoryQuery` | `getPersistedHistoryData` | обязательный generic args |
+
+```ts
+const page = await getPersistedHistoryData(
+	resourceWithHistory,
+	scope,
+	{ cursor: "next", limit: 20 },
+	queryClient
+);
+```
+
+Query operation получает `{ scope, args, client, signal }`. `isEnabled` operation и descriptor определяют автоматический запуск React observer; `staleTime`, `gcTime`, `meta` переходят в TanStack Query options.
+
+Imperative helpers используют `queryClient.fetchQuery`. Передавайте валидный scope; disabled policy в первую очередь управляет observer, а фактическая query function всё равно проверяет scope.
+
+## Write capabilities
+
+| Capability | Hook | Типичный смысл |
+| --- | --- | --- |
+| `save` | `usePersistedSaveMutation` | Сохранить/обновить snapshot |
+| `create` | `usePersistedCreateMutation` | Создать новую именованную запись |
+| `delete` | `usePersistedDeleteMutation` | Удалить запись |
+
+Mutation operation получает `{ scope, input, client }`. Generic persisted contract не передаёт `AbortSignal` для mutation.
+
+После успешного transport:
+
+1. выбирается cache strategy;
+2. strategy выполняется и awaited;
+3. вызывается optional hook `onSuccess(result, input)`.
+
+```ts
+usePersistedSaveMutation(resource, scope, {
+	cacheStrategy: null, // Отключить operation strategy.
+	onSuccess(result) {
+		showSuccess(`Сохранено ${result.id}`);
+	}
+});
+```
+
+`cacheStrategy: undefined` использует strategy операции; `null` отключает; объект заменяет исходную strategy. Для дополнения применяйте композицию.
+
+## Query keys
+
+```ts
+const keys = createPersistedRecordKeys<ViewScope>({
+	namespace: "view-config",
+	resource: "view",
+	normalizeScope: (scope) => ({
+		userId: scope?.userId ?? "",
+		viewId: scope?.viewId ?? ""
+	})
+});
+
+keys.all;
+keys.scope(scope);
+keys.list(scope);
+keys.latest(scope);
+keys.history(scope, { limit: 20 });
+keys.save(scope);
+keys.create(scope);
+keys.delete(scope);
+```
+
+Форма:
+
+```text
+[namespace, resource, normalizedScope, operation, optionalArgs]
+```
+
+Используется нормализация `/resource`: strings trim, object keys сортируются, `undefined` становится `null`. Date/Map/cyclic object требуют явного нормализатора.
+
+## JSON payload codec
+
+### Parse
+
+```ts
+parsePersistedJson<ViewConfig>(null); // null.
+parsePersistedJson<ViewConfig>(""); // null.
+parsePersistedJson<ViewConfig>("broken"); // null.
+parsePersistedJson<ViewConfig>('{"compact":true,"columns":[]}');
+// Object, но без runtime validation.
+```
+
+`parsePersistedJson<T>` только вызывает `JSON.parse` и делает TypeScript cast. Он не проверяет schema. После parse примените domain validator/normalizer на явной restore boundary.
+
+### Stringify
+
+```ts
+const payload = stringifyPersistedJson({ compact: false, columns: [] });
+```
+
+Ошибки `JSON.stringify` пробрасываются. Передавайте только JSON-compatible данные. В частности:
+
+- cyclic object и `BigInt` приводят к ошибке;
+- `Date` превращается в ISO string;
+- `undefined` в object-поле удаляется;
+- вызов с корневым `undefined` фактически может вернуть `undefined`, несмотря на заявленный string contract — не передавайте его.
+
+`createPersistedJsonCodec<T>()` возвращает `{ parse, stringify }` для передачи единым контрактом.
+
+## REST adapters
+
+### Query
+
+`createPersistedRestQueryOperation` принимает:
+
+- `buildUrl(scope, args)` — относительный или абсолютный URL;
+- optional `baseUrl`;
+- optional `buildInit(scope, args)`;
+- `parseResponse(unknown)` или custom `executor`;
+- optional `transform`;
+- `staleTime`, `gcTime`, `isEnabled`.
+
+Если нет ни `executor`, ни `parseResponse`, operation бросит `REST persisted operation requires executor or parseResponse.`
+
+Read signal всегда записывается поверх `buildInit.signal`, чтобы текущая TanStack Query отменяла именно свой запрос.
+
+### Mutation
+
+`createPersistedRestMutationOperation` поддерживает method `POST`, `PUT`, `DELETE`.
+
+- `bodyMapper(scope, input)` создаёт JSON body;
+- если mapper отсутствует/вернул `undefined`, body и default Content-Type не задаются;
+- иначе body сериализуется и default header равен `application/json`;
+- `buildInit` применяется после default headers и может полностью заменить headers;
+- response обязательно проходит `parseResponse` или custom executor;
+- optional `transform` строит domain result;
+- optional `cacheStrategy` прикрепляется к operation.
+
+REST adapter использует нейтральный `/http`: SAP SSO/X-CSRF policy здесь нет.
+
+## OData adapters
+
+OData operations используют metadata-aware transport из [`/odata`](../odata/README.mdx).
+
+### Query collection
+
+```ts
+const list = createPersistedODataQueryOperation<
+	ViewScope,
+	void,
+	SavedViewRecord[]
+>({
+	odata: { service: "Z_VIEW_CONFIG_SRV", target: "ViewSet" },
+	buildOptions: (scope) => ({
+		expression: createFilterEqual("UserId", scope.userId)
+	}),
+	transform: (rows) => rows
+});
+```
+
+Доступные options factory: `odata`, optional `baseUrl`, `buildParams`, `buildOptions`, `buildInit`, `transform`, `executor`, `staleTime`, `gcTime`, `meta`, `isEnabled`.
+
+`createPersistedODataQueryOperation` использует semantic method `query` и возвращает collection response data. `createPersistedODataReadOperation` использует `read` для одной entity по key parameters:
+
+```ts
+const latest = createPersistedODataReadOperation({
+	odata: { service: "Z_VIEW_CONFIG_SRV", target: "ViewSet" },
+	buildParams: (scope: ViewScope) => wrapODataParams({
+		UserId: scope.userId,
+		ViewId: scope.viewId
+	}),
+	transform: (record: SavedViewRecord) =>
+		parsePersistedJson<ViewConfig>(record.payload)
+});
+```
+
+`buildParams` должен возвращать wrapped OData parameters из `foundation-lib/odata-service`.
+
+### Mutation
+
+```ts
+const save = createPersistedODataMutationOperation({
+	odata: { service: "Z_VIEW_CONFIG_SRV", target: "ViewSet" },
+	method: "update",
+	buildParams: (scope: ViewScope) => wrapODataParams({
+		UserId: scope.userId,
+		ViewId: scope.viewId
+	}),
+	bodyMapper: (_scope, input: SaveViewInput) => ({
+		Payload: stringifyPersistedJson(input.payload)
+	}),
+	cacheStrategy: createInvalidatePersistedScopeCacheStrategy()
+});
+```
+
+Semantic methods:
+
+| Method | Params | Body |
+| --- | --- | --- |
+| `create` | запрещены | обязательный `bodyMapper` |
+| `update` | обязательный `buildParams` | обязательный `bodyMapper` |
+| `delete` | обязательный `buildParams` | запрещён |
+
+Это OData operation names, а не raw HTTP strings. Не передавайте `"PUT"`/`"POST"`.
+
+OData adapter наследует metadata validation, SAP cookies, SSO recovery и X-CSRF lifecycle. Query/read получают AbortSignal; mutations — нет в generic contract.
+
+## Custom и server-function operations
+
+Descriptor принимает любой object, соответствующий `PersistedQueryOperation`/`PersistedMutationOperation`. Server-function factories из [`/server-fn`](../server-fn/README.mdx) возвращают совместимые resource operations и могут быть использованы как capabilities, если их generic contract совпадает.
+
+## Cache strategies
+
+### Инвалидация всего scope
+
+```ts
+const invalidate = createInvalidatePersistedScopeCacheStrategy();
+```
+
+Инвалидирует prefix `descriptor.keys.scope(scope)`, поэтому затрагивает list/latest/history данного scope.
+
+### Точечное обновление
+
+```ts
+const setLatest = createSetPersistedQueryDataCacheStrategy({
+	getQueryKey: ({ descriptor, scope }) => descriptor.keys.latest(scope),
+	update: (_current, { result }) => result
+});
+```
+
+### Композиция
+
+```ts
+const combined = composePersistedCacheStrategies(setLatest, invalidate);
+```
+
+Порядок последовательный. Если strategy бросила ошибку, следующие steps и hook `onSuccess` не выполняются, хотя backend mutation уже могла завершиться.
+
+`applyPersistedCacheStrategy` — низкоуровневый helper для ручного вызова optional strategy.
+
+## Ошибки и безопасность
+
+- Scope `null`/`undefined` или rejected `isEnabled` блокирует query и вызывает ошибку при фактическом execution.
+- Network payload валидируйте в `parseResponse`/`transform`; TypeScript generic не является validator-ом.
+- Не храните secrets в payload/query keys/client persistence.
+- Save/create должны быть идемпотентны настолько, насколько это возможно для retry policy.
+- Cache update — локальная проекция, backend остаётся source of truth.
+- `parsePersistedJson` подавляет syntax error и возвращает `null`; различайте «нет payload» и «повреждён payload» на уровне продукта, если это важно.
+
+## Полный API
+
+| Группа | Exports |
+| --- | --- |
+| Descriptor/keys | `createPersistedResourceDescriptor`, `createPersistedRecordKeys` |
+| React reads | `usePersistedListQuery`, `usePersistedLatestQuery`, `usePersistedHistoryQuery` |
+| Imperative reads | `getPersistedListData`, `getPersistedLatestData`, `getPersistedHistoryData` |
+| Mutations | `usePersistedSaveMutation`, `usePersistedCreateMutation`, `usePersistedDeleteMutation` |
+| Payload | `parsePersistedJson`, `stringifyPersistedJson`, `createPersistedJsonCodec` |
+| REST adapters | `createPersistedRestQueryOperation`, `createPersistedRestMutationOperation` |
+| OData adapters | `createPersistedODataQueryOperation`, `createPersistedODataReadOperation`, `createPersistedODataMutationOperation` |
+| Cache | `applyPersistedCacheStrategy`, `createInvalidatePersistedScopeCacheStrategy`, `createSetPersistedQueryDataCacheStrategy`, `composePersistedCacheStrategies` |
+| Names/types | `PersistedReadOperationName`, `PersistedWriteOperationName`, `PersistedOperationName`, `PersistedPayloadCodec`, `PersistedRecordKeys` |
+| Operation contracts | `PersistedQueryOperationContext`, `PersistedMutationOperationContext`, `PersistedQueryOperation`, `PersistedMutationOperation`, `PersistedOperationCapabilities`, `PersistedTransportAdapter` |
+| Descriptor/cache contracts | `PersistedResourceDescriptor`, `CreatePersistedResourceDescriptorOptions`, `PersistedCacheStrategyContext`, `PersistedCacheStrategy`, `PersistedSetQueryDataStrategyOptions` |

@@ -14,8 +14,7 @@ import { type ODataCollectionResult } from "./useODataCollectionQuery";
 import { useODataCollectionUpdatesQuery } from "./useODataCollectionUpdatesQuery";
 import { useODataMetadata } from "./useODataMetadata";
 
-import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata";
-import type { EntityMetadata } from "@ryuzaki13/react-foundation-lib/odata-service";
+import type { CollectionItem, EntityMetadata } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 vi.mock("./fetchCollectionData", () => ({
 	fetchCollectionData: vi.fn()

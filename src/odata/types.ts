@@ -1,5 +1,4 @@
-import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata";
-import type { FilterExpression, ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-service";
+import type { CollectionItem, FilterExpression, ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 /**
  * Политика видимости фильтра в общей панели фильтров.

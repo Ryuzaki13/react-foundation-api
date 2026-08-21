@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { useODataCollectionStore } from "@ryuzaki13/react-foundation-lib/odata";
+import { useODataCollectionStore } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 import { ODataCollectionModel } from "./types";
 

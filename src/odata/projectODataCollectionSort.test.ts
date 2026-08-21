@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { projectODataCollectionSortByText } from "./projectODataCollectionSort";
 
 import type { ODataCollectionResult } from "./useODataCollectionQuery";
-import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata";
+import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 function createSource(): ODataCollectionResult<CollectionItem> {
 	const first = { CODE: "01", TEXT: "Я" };

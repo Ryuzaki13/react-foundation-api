@@ -6,7 +6,7 @@ import { createODataCollectionQueryKey } from "./createODataCollectionQueryKey";
 import { ODataCollectionConfig, ODataCollectionModel } from "./types";
 import { useODataCollectionQuery } from "./useODataCollectionQuery";
 
-import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata";
+import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 interface UseODataCollectionProps {
 	odata: ODataCollectionConfig;
