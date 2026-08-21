@@ -85,6 +85,64 @@ type ErrorReportDeliveryBody = {
 
 `JSON.stringify` может выбросить ошибку при циклических или неподдерживаемых данных. Draft должен соответствовать сериализуемому контракту `foundation-lib`.
 
+### Что такое draft и delivery body
+
+Для начинающего разработчика важно не смешивать две формы:
+
+```text
+ErrorReportDraft
+├── локальный lifecycle status
+├── retry information
+├── collected/sanitized payload
+└── identifiers
+
+ErrorReportDeliveryBody
+├── плоские обязательные backend fields
+└── payload: JSON string
+```
+
+Draft принадлежит локальному хранилищу `foundation-lib`. Delivery body — одноразовый snapshot для transport adapter-а.
+
+Нельзя отправлять draft целиком только потому, что он уже похож на body: backend contract намеренно отделён от local store contract.
+
+### Соответствие полей
+
+| Delivery field | Источник |
+| --- | --- |
+| `reportId` | `draft.reportId` |
+| `sessionId` | `draft.sessionId` |
+| `createdUtc` | `draft.createdUtc` |
+| `category` | `draft.category` |
+| `errorClass` | `draft.payload.error.name` |
+| `errorMessage` | `draft.payload.error.message` или fallback |
+| `stackTrace` | `draft.payload.error.stackTrace` |
+| `payload` | `JSON.stringify(normalized payload)` |
+
+Если message содержит непустой текст с пробелами по краям, проверка считает его валидным, но в delivery сохраняется исходная строка. Функция не выполняет общий trim draft-а.
+
+```ts
+draft.payload.error.message = "  Ошибка сохранения  ";
+
+const body = createErrorReportDeliveryBody(draft);
+body.errorMessage;
+// "  Ошибка сохранения  "
+```
+
+Если message пустой или whitespace-only:
+
+```ts
+draft.payload.error.message = "   ";
+
+const body = createErrorReportDeliveryBody(draft);
+body.errorMessage;
+// "Неизвестная ошибка"
+
+JSON.parse(body.payload).error.message;
+// "Неизвестная ошибка"
+```
+
+Функция создаёт новые wrapper objects и не записывает fallback обратно в draft.
+
 ## `sendErrorReport`
 
 Lifecycle:
@@ -113,6 +171,135 @@ status sent/sending ───────► текущий draft, adapter не 
 
 Adapter получает исходный snapshot `draft`, прочитанный до перевода store в `sending`. Используйте `body` как delivery payload, а context — для query invalidation или transport, которому нужен `QueryClient`.
 
+### Status table
+
+| Status draft до вызова | Вызывается adapter | Результат |
+| --- | --- | --- |
+| draft отсутствует | нет | `undefined` |
+| `sent` | нет | текущий draft |
+| `sending` | нет | текущий draft |
+| `pending` или эквивалентный начальный | да | `sent` либо exception + `failed` |
+| `failed` | да | повторная попытка |
+
+Функция не создаёт draft. Если `reportId` ошибочный, это не exception: result равен `undefined`.
+
+### Время отправки
+
+`sentUtc` создаётся на client после успешного завершения adapter-а:
+
+```ts
+new Date().toISOString()
+```
+
+Это client timestamp, а не server acknowledgement time. Для аудита используйте server time из backend record.
+
+### Ошибка построения body
+
+`createErrorReportDeliveryBody` вызывается внутри `try`. Если `JSON.stringify` выбросил error:
+
+- adapter не вызывается;
+- draft становится `failed`;
+- `failedReason` формируется через `createErrorInfo`;
+- исходный error снова выбрасывается caller-у.
+
+### UI flow
+
+```tsx
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { sendErrorReport } from "@ryuzaki13/react-foundation-api/error-report";
+
+function SendReportButton({ reportId }: { reportId: string }) {
+	const queryClient = useQueryClient();
+	const [isSending, setIsSending] = useState(false);
+	const [errorMessage, setErrorMessage] = useState<string>();
+
+	const handleSend = async () => {
+		setIsSending(true);
+		setErrorMessage(undefined);
+
+		try {
+			const result = await sendErrorReport(reportId, {
+				adapter: deliveryAdapter,
+				queryClient
+			});
+
+			if (!result) {
+				setErrorMessage("Черновик отчёта не найден");
+			}
+		} catch (error) {
+			setErrorMessage(
+				error instanceof Error ? error.message : "Не удалось отправить отчёт"
+			);
+		} finally {
+			setIsSending(false);
+		}
+	};
+
+	return (
+		<>
+			<button type="button" disabled={isSending} onClick={handleSend}>
+				{isSending ? "Отправка…" : "Отправить отчёт"}
+			</button>
+			{errorMessage ? <p role="alert">{errorMessage}</p> : null}
+		</>
+	);
+}
+```
+
+Local `isSending` нужен UI для немедленной блокировки повторного click. Draft status остаётся источником долгоживущего lifecycle, но component может не быть подписан на store.
+
+## Варианты delivery adapter-а
+
+### Обычный HTTP
+
+```ts
+import { httpFetchPayload } from "@ryuzaki13/react-foundation-api/http";
+import type { ErrorReportDeliveryAdapter } from "@ryuzaki13/react-foundation-api/error-report";
+
+export const deliveryAdapter: ErrorReportDeliveryAdapter = async (body) => {
+	await httpFetchPayload("/api/error-reports", {
+		init: {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body)
+		}
+	});
+};
+```
+
+### OData FunctionImport
+
+Если backend contract опубликован как FunctionImport, operation определяется metadata:
+
+```ts
+import { odataFunctionImportFn } from "@ryuzaki13/react-foundation-api/odata";
+import { wrapODataParams } from "@ryuzaki13/react-foundation-lib/odata-service";
+
+const deliveryAdapter: ErrorReportDeliveryAdapter = async (body, { queryClient }) => {
+	await odataFunctionImportFn({
+		odata: {
+			service: "ZERROR_REPORT_SRV",
+			target: "SendErrorReport"
+		},
+		params: wrapODataParams({
+			ReportId: body.reportId,
+			Payload: body.payload
+		})
+	})({ client: queryClient });
+};
+```
+
+Это только пример mapping: точные parameter names должны соответствовать metadata вашего сервиса.
+
+### Server function
+
+Adapter может вызвать client-safe serverFn operation. Модуль error-report не знает о transport и не ограничивает его, пока adapter возвращает `Promise<void>`.
+
+### Почему adapter ничего не возвращает
+
+`sendErrorReport` управляет local draft lifecycle, а не server entity. Если backend вернул receipt, adapter может обработать его внутри: сохранить в отдельный Query cache, telemetry или domain store. Public delivery contract считает успехом fulfilled promise.
+
 ## Adapter с cache invalidation
 
 ```ts
@@ -124,9 +311,120 @@ const adapter: ErrorReportDeliveryAdapter = async (body, { queryClient }) => {
 
 Если invalidation бросит ошибку, вся доставка считается неуспешной и draft станет `failed`, даже если backend уже принял отчёт. Для non-critical cache update обработайте ошибку внутри adapter-а.
 
+Безопасный вариант для необязательного refresh:
+
+```ts
+const adapter: ErrorReportDeliveryAdapter = async (body, { queryClient }) => {
+	await postReport(body);
+
+	try {
+		await queryClient.invalidateQueries({ queryKey: ["error-reports"] });
+	} catch (error) {
+		console.warn("Отчёт отправлен, но cache не обновлён", error);
+	}
+};
+```
+
+Решение зависит от contract: если fresh cache является частью успешной операции, не поглощайте ошибку.
+
 ## Повторная отправка и concurrency
 
 После `failed` функцию можно вызвать повторно. Проверка `sending` защищает от обычного повторного нажатия, но это не распределённая блокировка: два практически одновременных вызова могут успеть прочитать старый статус до его обновления. Backend желательно сделать идемпотентным по `reportId`.
+
+### Idempotency backend-а
+
+Рекомендуемый server contract:
+
+```text
+UNIQUE(reportId)
+```
+
+Повтор с тем же `reportId` должен либо вернуть прежний успешный result, либо завершиться предсказуемым «already accepted», которое adapter считает успехом.
+
+Это защищает сценарий:
+
+1. Backend принял report.
+2. Network response потерялся.
+3. Client пометил draft как `failed`.
+4. Пользователь повторил отправку.
+
+Без idempotency server создаст duplicate.
+
+### Несколько tabs
+
+Status `sending` в local store не является cross-tab distributed lock, если storage implementation явно не гарантирует это. Idempotency по `reportId` остаётся обязательной защитой.
+
+## Тестирование
+
+### Body builder
+
+```ts
+import { expect, it } from "vitest";
+
+it("подставляет fallback message в оба места", () => {
+	const body = createErrorReportDeliveryBody({
+		...draftFixture,
+		payload: {
+			...draftFixture.payload,
+			error: {
+				...draftFixture.payload.error,
+				message: " "
+			}
+		}
+	});
+
+	expect(body.errorMessage).toBe("Неизвестная ошибка");
+	expect(JSON.parse(body.payload).error.message).toBe("Неизвестная ошибка");
+});
+```
+
+### Delivery lifecycle
+
+В package/feature test проверяйте:
+
+- отсутствующий id не вызывает adapter;
+- `sent` не отправляется повторно;
+- `sending` не отправляется повторно;
+- success переводит status в `sent` и задаёт ISO `sentUtc`;
+- adapter error переводит status в `failed`;
+- исходный error сохраняет identity и выбрасывается повторно;
+- retry после `failed` снова вызывает adapter.
+
+Adapter удобно делать mock-функцией:
+
+```ts
+const adapter = vi.fn<ErrorReportDeliveryAdapter>().mockResolvedValue(undefined);
+```
+
+Не помещайте реальные stack traces, cookies, tokens или пользовательские данные в test snapshots.
+
+## Частые ошибки
+
+### Передавать draft вместо body
+
+Adapter contract уже получает подготовленный `body`. Не сериализуйте `context.draft` вместо него.
+
+### Дважды сериализовать `payload`
+
+`body.payload` уже string:
+
+```ts
+JSON.stringify(body)
+```
+
+правильно сериализует outer HTTP body. Не делайте `body.payload = JSON.stringify(body.payload)`.
+
+### Считать `sending` надёжной блокировкой
+
+Это local lifecycle guard. Server idempotency всё равно нужна.
+
+### Поглощать adapter error в UI
+
+Функция намеренно rethrow-ит error. Покажите feedback и оставьте возможность retry.
+
+### Добавлять transport в shared delivery module
+
+Endpoint и auth policy специфичны проекту. Они должны оставаться adapter-ом host application.
 
 ## Ошибки и безопасность
 
@@ -135,6 +433,31 @@ const adapter: ErrorReportDeliveryAdapter = async (body, { queryClient }) => {
 - `queryClient` передаётся adapter-у, но модуль сам не инвалидирует queries.
 - Функция управляет локальным draft store; не вызывайте её в среде без подходящего storage/runtime, если draft store там недоступен.
 - Статус `sent` означает успешное завершение adapter-а, а не обязательное подтверждение бизнес-обработки backend-ом.
+- Delivery body содержит stack trace и diagnostic payload: передавайте его только по защищённому каналу авторизованному endpoint.
+- Не логируйте `body.payload` целиком в production.
+- Redaction должна происходить при сборе draft в `foundation-lib`; delivery boundary не может безопасно угадать все domain secrets.
+
+## FAQ
+
+### Почему функции нужен `QueryClient`, даже если adapter его не использует?
+
+Это единый adapter context. Он позволяет OData operations и cache synchronization без глобального QueryClient.
+
+### Можно ли отправить report, которого нет в store?
+
+Нет. `sendErrorReport` принимает id существующего draft и вернёт `undefined`.
+
+### Можно ли изменить body перед отправкой?
+
+Да, внутри project adapter можно построить backend-specific envelope. Не мутируйте входной body; создайте новый object.
+
+### Когда разрешён retry?
+
+После status `failed`. `sent` и `sending` являются no-op states.
+
+### Кто отвечает за offline queue?
+
+Не этот модуль. Он хранит lifecycle одного draft и вызывает adapter. Background sync/retry scheduler должен быть отдельной явно спроектированной инфраструктурой.
 
 ## Полный API
 

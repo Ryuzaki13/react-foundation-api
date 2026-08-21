@@ -2,58 +2,449 @@ import { Meta } from "@storybook/addon-docs/blocks";
 
 <Meta title="Foundation API/OData/OData V2 and SAP Gateway" />
 
-# OData V2 и SAP Gateway через `@ryuzaki13/react-foundation-api/odata`
+# OData V2 и SAP Gateway
 
-Это основной entrypoint пакета для SAP/OData: transport с cookies, SSO и X-CSRF; OData V2 envelope; metadata-aware read/write operations; TanStack Query metadata; справочники; зависимые сегменты и table columns.
+Entrypoint `@ryuzaki13/react-foundation-api/odata` — основной API-модуль для browser-приложений, работающих с SAP Gateway и OData V2.
 
-Документ описывает только публичный subpath. Внутренние файлы `odataFetchFn`, parser-ы и test utils не являются отдельными import paths.
+Он объединяет:
+
+- HTTP transport с SAP headers, cookies, SSO recovery и X-CSRF token;
+- разбор стандартного OData V2 JSON envelope;
+- metadata-aware операции чтения и записи;
+- интеграцию с TanStack Query;
+- кеширование и обновление `$metadata`;
+- загрузку code/text справочников;
+- модели зависимых справочников;
+- построение и обогащение колонок TanStack Table по metadata.
+
+Документ рассчитан на разработчика, который не видит исходники пакета и только начинает работать с JavaScript, TypeScript, React, TanStack Query и OData.
 
 ## Содержание
 
-- [Что решает модуль](#что-решает-модуль)
-- [Подготовка приложения](#подготовка-приложения)
-- [Project adapter и base URLs](#project-adapter-и-base-urls)
-- [Низкоуровневый transport](#низкоуровневый-transport)
-- [`odataFetch` и query options](#odatafetch-и-query-options)
-- [Metadata-aware operations](#metadata-aware-operations)
-- [TanStack Query и mutations](#tanstack-query-и-mutations)
+- [Что делает и чего не делает модуль](#что-делает-и-чего-не-делает-модуль)
+- [Установка и импорт](#установка-и-импорт)
+- [Зависимости и среда выполнения](#зависимости-и-среда-выполнения)
+- [OData V2 простыми словами](#odata-v2-простыми-словами)
+- [Как выбрать уровень API](#как-выбрать-уровень-api)
+- [Быстрый старт](#быстрый-старт)
+- [Общий маршрут запроса](#общий-маршрут-запроса)
+- [Инициализация project adapter](#инициализация-project-adapter)
+- [Base URL и URL helpers](#base-url-и-url-helpers)
+- [Низкоуровневый SAP transport](#низкоуровневый-sap-transport)
+- [OData V2 JSON envelope](#odata-v2-json-envelope)
+- [Низкоуровневый `odataFetch`](#низкоуровневый-odatafetch)
+- [Metadata-aware operation helpers](#metadata-aware-operation-helpers)
+- [`odataQueryFn`: списки и parameterized query](#odataqueryfn-списки-и-parameterized-query)
+- [`odataReadFn`: одна entity](#odatareadfn-одна-entity)
+- [`odataCreateFn`: создание](#odatacreatefn-создание)
+- [`odataUpdateFn`: обновление](#odataupdatefn-обновление)
+- [`odataDeleteFn`: удаление](#odatadeletefn-удаление)
+- [`odataFunctionImportFn`: FunctionImport](#odatafunctionimportfn-functionimport)
+- [`autoParse` и `transform`](#autoparse-и-transform)
+- [TanStack Query: чтение](#tanstack-query-чтение)
+- [TanStack Query: mutations и cache](#tanstack-query-mutations-и-cache)
 - [DEV dry-run helpers](#dev-dry-run-helpers)
-- [Metadata queries](#metadata-queries)
+- [Metadata API](#metadata-api)
+- [Entity metadata helpers](#entity-metadata-helpers)
 - [OData collections](#odata-collections)
-- [Зависимые segments](#зависимые-segments)
-- [Table columns](#table-columns)
-- [SSO и X-CSRF lifecycle](#sso-и-x-csrf-lifecycle)
-- [Ошибки и ограничения](#ошибки-и-ограничения)
-- [Полный публичный API](#полный-публичный-api)
+- [Collection version-check и Service Worker cache](#collection-version-check-и-service-worker-cache)
+- [Collection model для UI](#collection-model-для-ui)
+- [Зависимые справочники и segments](#зависимые-справочники-и-segments)
+- [OData metadata и TanStack Table](#odata-metadata-и-tanstack-table)
+- [SSO lifecycle](#sso-lifecycle)
+- [X-CSRF lifecycle](#x-csrf-lifecycle)
+- [Четыре разных кеша](#четыре-разных-кеша)
+- [Ошибки](#ошибки)
+- [Безопасность и ограничения](#безопасность-и-ограничения)
+- [Browser, SSR и workers](#browser-ssr-и-workers)
+- [Тестирование consumer-кода](#тестирование-consumer-кода)
+- [Deprecated API](#deprecated-api)
+- [Полная карта публичного API](#полная-карта-публичного-api)
+- [Частые вопросы](#частые-вопросы)
+- [Связанные модули](#связанные-модули)
 
-## Что решает модуль
+## Что делает и чего не делает модуль
+
+### Делает
+
+- Выполняет запросы к SAP Gateway и OData V2 endpoint.
+- Добавляет общие SAP headers.
+- Отправляет cookies через `credentials: "include"`.
+- Определяет SAP client.
+- Получает, кеширует и обновляет X-CSRF token для write-запросов.
+- Распознаёт SSO redirect и SAML form.
+- Пытается восстановить SSO session в скрытом iframe.
+- Разбирает OData V2 envelope `{ d: ... }`.
+- Извлекает `__count` как `totalCount`.
+- Загружает и кеширует `$metadata`.
+- Проверяет, является target Entity или FunctionImport.
+- Строит path операции по metadata.
+- Может преобразовать OData values по metadata через `autoParse`.
+- Передаёт `AbortSignal` из TanStack Query в read-запрос.
+- Даёт hooks для metadata, справочников и table columns.
+
+### Не делает
+
+- Не определяет бизнес-правила приложения.
+- Не знает, что такое «заказ», «вариант», «отчёт» или другой domain object.
+- Не проверяет authorization вместо SAP backend.
+- Не превращает TypeScript generic в runtime validation.
+- Не строит query key конкретной entity автоматически.
+- Не выбирает cache strategy после mutation автоматически.
+- Не хранит backend state в Zustand или React state.
+- Не заменяет TanStack Query.
+- Не делает Service Worker cache только из-за наличия `swCache`: header должен понимать Service Worker host-приложения.
+- Не гарантирует SSR-совместимость SSO recovery.
+- Не экспортирует внутренние файлы как отдельные package subpath.
+
+Граница ответственности выглядит так:
 
 ```text
-application operation
-        │
-        ▼
-OData metadata ──► target validation + URL + value parsing
-        │
-        ▼
-SAP transport ───► cookies + sap-client + SSO + X-CSRF
-        │
-        ▼
-OData V2 response ─► { data, totalCount? }
+React component / route loader
+             │
+             ▼
+entity или feature API приложения
+             │
+             ▼
+TanStack Query + stable query key
+             │
+             ▼
+@ryuzaki13/react-foundation-api/odata
+             │
+             ├── metadata
+             ├── URL и OData envelope
+             ├── SSO и X-CSRF
+             └── browser fetch
+             │
+             ▼
+SAP Gateway
 ```
 
-Модуль не содержит бизнес-mapping конкретной entity, UI-компоненты и authorization rules backend-а. Фильтры/parameters/metadata types строятся pure helpers из `@ryuzaki13/react-foundation-lib/odata-service`.
+DTO-to-domain mapping конкретной entity остаётся в приложении. Pure builders для metadata, parameters, `$filter` и `$orderby` находятся в `@ryuzaki13/react-foundation-lib/odata-service`.
 
-Для обычного REST без SAP side effects используйте [`@ryuzaki13/react-foundation-api/http`](../http/README.mdx).
-
-## Подготовка приложения
+## Установка и импорт
 
 ```bash
-npm install @ryuzaki13/react-foundation-api @ryuzaki13/react-foundation-lib @tanstack/react-query react
+npm install \
+	@ryuzaki13/react-foundation-api \
+	@ryuzaki13/react-foundation-lib \
+	@tanstack/react-query \
+	react
 ```
 
-Для table adapter также нужен совместимый `@tanstack/react-table`.
+Для `useODataTableColumns` также нужен совместимый `@tanstack/react-table`.
 
-Hooks работают внутри `QueryClientProvider`:
+Пакет не имеет корневого entrypoint. Правильный импорт:
+
+```ts
+import {
+	odataQueryFn,
+	odataReadFn,
+	useODataMetadataQuery
+} from "@ryuzaki13/react-foundation-api/odata";
+```
+
+Неправильно:
+
+```ts
+// Корневой entrypoint не опубликован.
+import { odataQueryFn } from "@ryuzaki13/react-foundation-api";
+
+// Внутренний файл не является public contract.
+import { odataFetchFn } from "@ryuzaki13/react-foundation-api/dist/odata/odataFetchFn";
+```
+
+Pure OData builders импортируются отдельно из `foundation-lib`:
+
+```ts
+import {
+	createFilterEqual,
+	createFilterBetween,
+	wrapODataParams
+} from "@ryuzaki13/react-foundation-lib/odata-service";
+```
+
+### `import type`
+
+TypeScript-типы лучше импортировать через `import type`:
+
+```ts
+import type {
+	ODataCollectionConfig,
+	ODataFetchFnRequest,
+	ODataFetchOptions,
+	ODataProjectAdapter
+} from "@ryuzaki13/react-foundation-api/odata";
+```
+
+`import type` удаляется из JavaScript bundle и показывает читателю, что значение не вызывается в runtime.
+
+## Зависимости и среда выполнения
+
+| Возможность | Что требуется |
+| --- | --- |
+| `odataFetch`, `fetchBase`, `fetchODataJson` | Web Fetch API: `fetch`, `Request`, `Response`, `Headers`, `URLSearchParams` |
+| Metadata-aware operations | `@tanstack/react-query` и `QueryClient` |
+| React hooks | React и `QueryClientProvider` |
+| SSO recovery | Browser `window`, `document`, iframe и form submission |
+| Metadata XML parsing | `DOMParser` через `foundation-lib/odata-service` |
+| Table adapter | `@tanstack/react-table` и `foundation-lib/table` |
+
+Основная среда модуля — браузерное SPA-приложение.
+
+В современном Node.js есть `fetch`, но это не делает весь entrypoint server-safe: automatic SSO recovery использует DOM, а relative SAP paths, cookies и compile-time project constants обычно рассчитаны на browser/proxy окружение.
+
+## OData V2 простыми словами
+
+### Service
+
+OData service — набор endpoint, metadata и операций, опубликованных backend-ом.
+
+Пример имени service:
+
+```text
+Z_SALES_ORDER_SRV
+```
+
+Обычный SAP Gateway base path:
+
+```text
+/sap/opu/odata/sap/Z_SALES_ORDER_SRV
+```
+
+В конфигурации operation имя service передаётся без base path:
+
+```ts
+const odata = {
+	service: "Z_SALES_ORDER_SRV",
+	target: "SalesOrderSet"
+};
+```
+
+### Metadata
+
+Metadata — XML-документ, описывающий service:
+
+```text
+/Z_SALES_ORDER_SRV/$metadata
+```
+
+Из metadata библиотека узнаёт:
+
+- какие Entity и FunctionImport существуют;
+- какие параметры обязательны;
+- какие OData types имеют поля;
+- какой suffix результата использует parameterized entity;
+- какой HTTP method объявлен у FunctionImport;
+- какие code/text связи заданы SAP annotations.
+
+Metadata не содержит фактические rows и не доказывает, что каждый response корректен.
+
+### Entity и EntitySet
+
+Entity — описание одной записи. EntitySet — endpoint коллекции записей.
+
+```text
+GET /Z_SALES_ORDER_SRV/SalesOrderSet
+```
+
+Ответ может содержать несколько заказов.
+
+Чтение одной entity по key:
+
+```text
+GET /Z_SALES_ORDER_SRV/SalesOrderSet(OrderId='42')
+```
+
+В API пакета collection/query читает `odataQueryFn`, одну entity — `odataReadFn`.
+
+### Parameterized query entity
+
+Некоторые SAP services публикуют query entity с parameters и отдельным result suffix:
+
+```text
+GET /Z_REPORT_SRV/SalesReport(
+  CompanyId='1000',
+  DateFrom=datetime'2026-01-01T00:00:00'
+)/Results
+```
+
+Metadata entity содержит поле `result`, например `Results` или `Set`. Для такого target нужен `odataQueryFn`, а не `odataReadFn`.
+
+### FunctionImport
+
+FunctionImport — отдельная операция, описанная в metadata:
+
+```text
+POST /Z_SALES_ORDER_SRV/CloseOrder?OrderId='42'
+```
+
+HTTP method берётся из metadata. FunctionImport может быть read-like или write-like по бизнес-смыслу, поэтому helper выбирают по типу metadata target, а не только по глаголу feature.
+
+Для FunctionImport используется `odataFunctionImportFn`.
+
+### Target
+
+`target` — точное имя Entity/EntitySet-like target или FunctionImport внутри service metadata:
+
+```ts
+{
+	service: "Z_SALES_ORDER_SRV",
+	target: "SalesOrderSet"
+}
+```
+
+Target не является URL. Metadata-aware helper сам строит path.
+
+### Target params и query options — разные вещи
+
+Это один из самых важных разделов.
+
+`params` адресуют target или FunctionImport:
+
+```text
+SalesOrderSet(OrderId='42')
+SalesReport(CompanyId='1000')/Results
+CloseOrder?OrderId='42'
+```
+
+`options` управляют выборкой:
+
+```text
+$filter
+$orderby
+$select
+$expand
+$top
+$skip
+$inlinecount
+```
+
+Сравнение:
+
+| Значение | Куда попадает | Чем строить |
+| --- | --- | --- |
+| Key entity | В `(Key=...)` | `params` + `wrapODataParams` |
+| Parameterized entity parameter | В `(Param=...)` | `params` + `wrapODataParams` |
+| FunctionImport parameter | В query string самой функции | `params` + `wrapODataParams` |
+| Filter rows | `$filter` | `options.expression` |
+| Sorting | `$orderby` | `options.sorts` |
+| Paging | `$top`, `$skip` | `options.top`, `options.skip` |
+| Projection | `$select`, `$expand` | `options.select`, `options.expand` |
+
+Нельзя переносить key в `$filter`, если backend contract ожидает key path. Нельзя передавать `$top` как target parameter.
+
+### Body
+
+Body используется только для entity create/update:
+
+```ts
+{
+	body: {
+		OrderId: "42",
+		Title: "Новый заказ"
+	}
+}
+```
+
+Helper сериализует body через `JSON.stringify`.
+
+### OData V2 envelope
+
+SAP Gateway часто возвращает JSON не как обычный array, а в envelope:
+
+```json
+{
+	"d": {
+		"results": [
+			{ "OrderId": "42", "Title": "Заказ" }
+		],
+		"__count": "1"
+	}
+}
+```
+
+`fetchODataJson` превращает его в:
+
+```ts
+{
+	data: [{ OrderId: "42", Title: "Заказ" }],
+	totalCount: 1
+}
+```
+
+Metadata-aware runner возвращает тот же внешний result shape:
+
+```ts
+type ODataRunnerResult<T> = {
+	data: T;
+	totalCount?: number;
+};
+```
+
+Не забывайте `.data` при использовании результата.
+
+### QueryClient
+
+`QueryClient` — объект TanStack Query, который хранит query cache и передаёт runtime context запросам.
+
+Metadata-aware helper возвращает не Promise результата, а runner:
+
+```ts
+const runner = odataQueryFn<unknown>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderSet"
+	}
+});
+
+const result = await runner({ client: queryClient });
+```
+
+Почему два вызова:
+
+1. `odataQueryFn(options)` создаёт настроенную функцию.
+2. Эта функция получает текущий `QueryClient` и optional `AbortSignal` в момент выполнения.
+
+В `useQuery` второй вызов делает TanStack Query автоматически.
+
+## Как выбрать уровень API
+
+Entrypoint содержит несколько уровней. Начинайте с самого высокого подходящего уровня.
+
+| Сценарий | API |
+| --- | --- |
+| Обычный list/query Entity | `odataQueryFn` |
+| Одна Entity по key | `odataReadFn` |
+| Создание Entity | `odataCreateFn` |
+| Обновление Entity | `odataUpdateFn` |
+| Удаление Entity | `odataDeleteFn` |
+| FunctionImport | `odataFunctionImportFn` |
+| Metadata service/entity | `useODataMetadataQuery`, `useODataMetadata`, `getODataMetadataData` |
+| Code/text справочник | `useODataCollectionQuery`, `useODataCollection` |
+| Table columns по metadata | `useODataTableColumns` |
+| Уже известный raw OData path без metadata orchestration | `odataFetch` |
+| Нужен raw `Response` и SAP policy | `fetchBase` |
+
+Правило:
+
+```text
+specialized helper подходит? ── да ──► используйте его
+             │
+             нет
+             ▼
+нужен готовый OData path? ───── да ──► odataFetch
+             │
+             нет
+             ▼
+нужен raw Response? ─────────── да ──► fetchBase / fetchQueryFn
+```
+
+`fetchBase` и `odataFetch` — infrastructure primitives. Они требуют от consumer больше знаний и дают меньше metadata guarantees.
+
+## Быстрый старт
+
+### 1. Создать singleton QueryClient
 
 ```tsx
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -62,21 +453,193 @@ import { createQueryClient } from "@ryuzaki13/react-foundation-lib/query-client"
 const queryClient = createQueryClient();
 
 export function App() {
-	return <QueryClientProvider client={queryClient}>{/* приложение */}</QueryClientProvider>;
+	return (
+		<QueryClientProvider client={queryClient}>
+			<AppRoutes />
+		</QueryClientProvider>
+	);
 }
 ```
 
-Пакет рассчитан на host-сборку, которая определяет используемые compile-time constants (`__DEV__`, `__PREVIEW__`, SAP client, app id/origins/base config URL и build id). Их точная доставка относится к build-конфигурации приложения; это не runtime options одного запроса.
+Не создавайте `QueryClient` внутри component render:
 
-## Project adapter и base URLs
+```tsx
+function App() {
+	// Неверно: новый client и новый cache на каждый render.
+	const queryClient = new QueryClient();
+	return <QueryClientProvider client={queryClient}>...</QueryClientProvider>;
+}
+```
 
-До первого OData hook/fetch настройте глобальный adapter один раз при bootstrap:
+### 2. Описать DTO и domain model
+
+```ts
+type SalesOrderDto = {
+	CompanyId: string;
+	OrderId: string;
+	Title: string;
+	Amount: number;
+	CreatedAt: Date;
+};
+
+type SalesOrder = {
+	id: string;
+	title: string;
+	amount: number;
+	createdAt: Date;
+};
+
+function mapSalesOrder(dto: SalesOrderDto): SalesOrder {
+	return {
+		id: dto.OrderId,
+		title: dto.Title,
+		amount: dto.Amount,
+		createdAt: dto.CreatedAt
+	};
+}
+```
+
+DTO повторяет внешний SAP contract. Domain model использует имена приложения.
+
+### 3. Создать stable query options
+
+```ts
+import { queryOptions } from "@tanstack/react-query";
+
+import { odataQueryFn } from "@ryuzaki13/react-foundation-api/odata";
+import { createFilterEqual } from "@ryuzaki13/react-foundation-lib/odata-service";
+
+type SalesOrderListParams = {
+	companyId: string;
+	limit: number;
+};
+
+const salesOrderKeys = {
+	all: ["sales-orders"] as const,
+	list: (params: SalesOrderListParams) =>
+		[...salesOrderKeys.all, "list", params] as const
+};
+
+export function salesOrderListQueryOptions(params: SalesOrderListParams) {
+	const normalized = {
+		companyId: params.companyId.trim(),
+		limit: params.limit
+	};
+
+	return queryOptions({
+		queryKey: salesOrderKeys.list(normalized),
+		queryFn: odataQueryFn<SalesOrderDto, SalesOrder>({
+			odata: {
+				service: "Z_SALES_ORDER_SRV",
+				target: "SalesOrderSet"
+			},
+			options: {
+				expression: createFilterEqual<SalesOrderDto, string>(
+					"CompanyId",
+					normalized.companyId
+				),
+				top: normalized.limit,
+				inlinecount: "allpages"
+			},
+			autoParse: true,
+			transform: (rows) => rows.map(mapSalesOrder)
+		})
+	});
+}
+```
+
+Filter key полностью типизирован:
+
+```ts
+createFilterEqual<SalesOrderDto, string>("CompanyId", normalized.companyId);
+```
+
+### 4. Использовать query в component
+
+```tsx
+import { useQuery } from "@tanstack/react-query";
+
+export function SalesOrderList({ companyId }: { companyId: string }) {
+	const query = useQuery(
+		salesOrderListQueryOptions({
+			companyId,
+			limit: 50
+		})
+	);
+
+	if (query.isPending) {
+		return <p>Загрузка заказов…</p>;
+	}
+
+	if (query.isError) {
+		return <p>Не удалось загрузить заказы</p>;
+	}
+
+	return (
+		<ul>
+			{query.data.data.map((order) => (
+				<li key={order.id}>{order.title}</li>
+			))}
+		</ul>
+	);
+}
+```
+
+Обратите внимание:
+
+- `query.data` — result runner-а;
+- `query.data.data` — массив domain objects;
+- `query.data.totalCount` — optional полное количество rows;
+- backend state не копируется в `useState` или Zustand.
+
+## Общий маршрут запроса
+
+Metadata-aware read проходит этапы:
+
+```text
+1. Consumer создаёт operation options
+                    │
+                    ▼
+2. TanStack Query вызывает runner({ client, signal })
+                    │
+                    ▼
+3. getODataMetadataData загружает/читает metadata
+                    │
+                    ▼
+4. Находится target Entity или FunctionImport
+                    │
+                    ▼
+5. Проверяется совместимость operation
+                    │
+                    ▼
+6. Строится target path и query options
+                    │
+                    ▼
+7. fetchBase добавляет SAP/SSO/X-CSRF policy
+                    │
+                    ▼
+8. fetchODataJson снимает OData envelope
+                    │
+                    ▼
+9. autoParse преобразует известные metadata fields
+                    │
+                    ▼
+10. transform строит result consumer-а
+```
+
+Write проходит те же этапы, но дополнительно получает X-CSRF token и использует HTTP method операции.
+
+## Инициализация project adapter
+
+Project adapter задаёт настройки, которые нельзя надёжно определить внутри универсального пакета.
+
+Настройте его один раз до первого OData запроса:
 
 ```ts
 import { configureODataProjectAdapter } from "@ryuzaki13/react-foundation-api/odata";
 
 configureODataProjectAdapter({
-	devDp0Service: "Z_SPECIAL_SRV",
+	devDp0Service: "Z_SPECIAL_REPORT_SRV",
 	resolveSapClient: () => appConfig.sapClient,
 	metadataVersion: {
 		service: "Z_TECHNICAL_SRV",
@@ -89,7 +652,15 @@ configureODataProjectAdapter({
 });
 ```
 
+Типы:
+
 ```ts
+type ODataProjectTechnicalEndpoint = {
+	service: string;
+	target: string;
+	baseUrl?: BaseURLType;
+};
+
 type ODataProjectAdapter = {
 	devDp0Service?: string;
 	resolveSapClient?: () => string | null | undefined;
@@ -98,67 +669,362 @@ type ODataProjectAdapter = {
 };
 ```
 
-| Поле | Назначение |
-| --- | --- |
-| `devDp0Service` | Только этот service в dev/preview переводится на `odataDp0` |
-| `resolveSapClient` | Production/общий runtime SAP client |
-| `metadataVersion` | Technical entity со временем генерации metadata |
-| `collectionUpdates` | Technical entity со справочниками, изменёнными за неделю |
+### `devDp0Service`
 
-Если technical endpoint не задан, соответствующий version/update query возвращает безопасный пустой результат без network request.
+В dev/preview только указанный service автоматически получает base URL `odataDp0`:
 
-Adapter хранится в module-level state. Повторный вызов полностью заменяет object; merge не выполняется. `getODataProjectAdapter` возвращает текущий object.
+```ts
+resolveODataBaseUrl("Z_SPECIAL_REPORT_SRV");
+// dev/preview: "odataDp0".
+// production: "odata".
+```
 
-### Base URL types
+Сравнение выполняется после `normalizeODataServiceName`, поэтому suffix после `;` не влияет:
+
+```ts
+normalizeODataServiceName("Z_SPECIAL_REPORT_SRV;v=2");
+// "Z_SPECIAL_REPORT_SRV".
+```
+
+### `resolveSapClient`
+
+Callback возвращает SAP client в runtime:
+
+```ts
+resolveSapClient: () => "300"
+```
+
+Если callback отсутствует или вернул `null`/`undefined`, production transport не добавляет `sap-client` из adapter-а.
+
+В dev/preview часть client policy задаётся compile-time project constants и выбранным proxy.
+
+### `metadataVersion`
+
+Optional technical endpoint сообщает, когда service metadata были сгенерированы последний раз. Он позволяет хранить metadata долго и обновлять только после реального изменения.
+
+Если endpoint не настроен, metadata всё равно загружаются и работают; automatic version-check просто отключён.
+
+### `collectionUpdates`
+
+Optional technical endpoint сообщает, какие справочники изменились за последнее окно. Он нужен для безопасного `ttl=forever` справочников.
+
+Если endpoint отсутствует, query обновлений возвращает пустой успешный result без network request.
+
+### Глобальное состояние adapter-а
+
+```ts
+const adapter = getODataProjectAdapter();
+```
+
+`configureODataProjectAdapter(next)` полностью заменяет текущий object, а не merge-ит его:
+
+```ts
+configureODataProjectAdapter({ resolveSapClient });
+configureODataProjectAdapter({ metadataVersion });
+
+// resolveSapClient уже потерян.
+```
+
+Правильнее собрать единый object и вызвать конфигурацию один раз.
+
+Для test cleanup можно вернуть пустой adapter:
+
+```ts
+afterEach(() => {
+	configureODataProjectAdapter({});
+});
+```
+
+## Base URL и URL helpers
+
+### `BaseURLType`
 
 ```ts
 type BaseURLType = "odata" | "odataDp0" | "odataUi2" | "config" | "";
 ```
 
-| Type | Base path |
-| --- | --- |
-| `odata` | `/sap/opu/odata/sap` |
-| `odataDp0` | dev/preview DP0 proxy, production обычный SAP OData path |
-| `odataUi2` | `/sap/opu/odata/UI2` или dev/preview proxy |
-| `config` | compile-time app config base URL |
-| `""` | Ничего не добавлять к input path |
+| Type | Назначение | Base path |
+| --- | --- | --- |
+| `odata` | Основные SAP OData services | `/sap/opu/odata/sap` |
+| `odataDp0` | Выбранный dev/preview DP0 proxy | dev/preview `/sap-dp0/opu/odata/sap`, production обычный OData path |
+| `odataUi2` | SAP UI2 services | dev/preview proxy или `/sap/opu/odata/UI2` |
+| `config` | Project configuration endpoint | compile-time `__BASE_APP_CONFIG_URL__` |
+| `""` | Не добавлять base path | пустая строка |
 
-`resolveODataBaseUrl(service, baseUrl?)` учитывает `devDp0Service`, иначе возвращает явный `baseUrl` или `odata`. Service name нормализуется: suffix после `;` отбрасывается `normalizeODataServiceName`.
+Экспортированные constants:
 
-Низкоуровневые constants доступны как `BaseODataURL`, `BaseODataDp0URL`, `BaseODataUI2URL`, `BaseAppConfigURL`, `BaseUrlMap`. Рассматривайте `BaseUrlMap` как readonly library configuration.
+```ts
+BaseODataURL;
+BaseODataDp0URL;
+BaseODataUI2URL;
+BaseAppConfigURL;
+BaseUrlMap;
+```
 
-## Низкоуровневый transport
+`BaseUrlMap` readonly:
+
+```ts
+BaseUrlMap.odata;
+// "/sap/opu/odata/sap".
+```
+
+Не изменяйте его в consumer-коде.
+
+### `resolveODataBaseUrl`
+
+```ts
+resolveODataBaseUrl(service, explicitBaseUrl?);
+```
+
+Порядок:
+
+1. В dev/preview проверяется `devDp0Service`.
+2. Если service совпал, возвращается `odataDp0`.
+3. Иначе используется explicit `baseUrl`.
+4. Если explicit value нет, используется `odata`.
+
+Следствие: dev DP0 routing имеет приоритет над explicit base URL для совпавшего service.
+
+### `resolveODataSapClient`
+
+```ts
+const sapClient = resolveODataSapClient();
+```
+
+Возвращает значение project adapter callback или `null`.
+
+### `getInputUrl`
+
+```ts
+getInputUrl("/sap/example");
+// "/sap/example".
+
+getInputUrl(new Request("https://example.test/sap/example"));
+// "https://example.test/sap/example".
+```
+
+Поддерживает string, `Request` и остальные `RequestInfo` через `toString()`.
+
+### `normalizeRelativePath`
+
+```ts
+normalizeRelativePath("sap/example?x=1#hash");
+// "/sap/example".
+
+normalizeRelativePath("");
+// "/".
+```
+
+Функция:
+
+- удаляет query string;
+- удаляет hash;
+- добавляет начальный `/`;
+- не нормализует повторные slash;
+- не декодирует URL;
+- не удаляет SAP suffix `;o=...`.
+
+## Низкоуровневый SAP transport
 
 ### `fetchBase`
 
 ```ts
-const response = await fetchBase(
-	"/Z_SERVICE_SRV/Ping",
-	{ method: "GET" },
-	"odata"
-);
+async function fetchBase(
+	input: RequestInfo,
+	init: RequestInitType = {},
+	baseUrlType: BaseURLType = "odata"
+): Promise<Response>;
 ```
 
-Возвращает успешный raw `Response`. Для SAP request transport:
+Пример raw XML:
 
-- добавляет `sap-language: ru`;
-- добавляет `sap-contextid-accept: header`;
-- добавляет `sap-client`, если client определён;
-- ставит `Accept: application/json`, если consumer его не задал;
-- всегда использует `credentials: include`;
-- для write operation получает X-CSRF token;
-- распознаёт redirect/HTML SSO и пытается восстановить session;
-- при `401/403` write один раз очищает CSRF cache, получает новый token и повторяет запрос;
-- на non-ok строит и бросает Error.
+```ts
+const response = await fetchBase(
+	"/Z_SALES_ORDER_SRV/$metadata",
+	{
+		method: "GET",
+		headers: {
+			Accept: "application/xml"
+		}
+	},
+	"odata"
+);
 
-`RequestInitType` расширяет `RequestInit` внутренними флагами retry. Не выставляйте `retried`/`ssoRetried` в обычном прикладном коде.
+const xml = await response.text();
+```
+
+`fetchBase` возвращает raw `Response`. Body ещё не распарсен.
+
+### Как определяется SAP request
+
+Если `baseUrlType` не пустой, request считается SAP request.
+
+При `baseUrlType: ""` request считается SAP только когда normalized path начинается с:
+
+```text
+/sap/
+/sap-dp0/
+```
+
+Это влияет на:
+
+- `sap-contextid-accept`;
+- `sap-client`;
+- X-CSRF;
+- manual redirect;
+- SSO recovery.
+
+### Headers по умолчанию
+
+Для всех requests:
+
+```text
+sap-language: ru
+Accept: application/json      если consumer не передал Accept
+```
+
+Для SAP requests:
+
+```text
+sap-contextid-accept: header
+sap-client: <resolved client> если client доступен
+```
+
+Для write с body:
+
+```text
+Content-Type: application/json если consumer не задал Content-Type
+```
+
+Для SAP write:
+
+```text
+x-csrf-token: <token>
+```
+
+Consumer headers сохраняются, кроме headers, которые transport намеренно устанавливает по своей policy.
+
+### Cookies и redirects
+
+Фактический `fetch` всегда получает:
+
+```ts
+{
+	credentials: "include"
+}
+```
+
+Для SAP request также используется:
+
+```ts
+{
+	redirect: "manual"
+}
+```
+
+Manual redirect нужен, чтобы browser не ушёл автоматически на ADFS/SSO page до того, как transport распознает истёкшую session.
+
+### GET без body
+
+Transport не добавляет `Content-Type` для GET без body:
+
+```ts
+await fetchJson("/Filters?cfo-count", {}, "config");
+```
+
+Ожидаемые headers включают `Accept`, но не `Content-Type`.
+
+### `RequestInitType`
+
+```ts
+type RequestInitType = RequestInit & {
+	retried?: boolean;
+	ssoRetried?: boolean;
+};
+```
+
+`retried` и `ssoRetried` — internal lifecycle flags. Не используйте их как прикладные options: consumer может случайно отключить защитный retry.
+
+### Successful response
+
+Если `response.ok === true`, `fetchBase` возвращает `Response`.
+
+### HTTP error
+
+Если status неуспешный, transport пытается построить полезное сообщение.
+
+Для SAP JSON:
+
+```json
+{
+	"error": {
+		"code": "SY/530",
+		"message": {
+			"value": "Необходимо указать запрос на перенос!"
+		}
+	}
+}
+```
+
+Результат:
+
+```text
+Error: SY/530 | Необходимо указать запрос на перенос!
+```
+
+Рассматриваются unique значения:
+
+- `error` как string;
+- `error.code`;
+- `error.message.value`;
+- `error.message` как string;
+- top-level `details`;
+- top-level `message`.
+
+Вложенный `innererror.errordetails` сейчас не добавляется в message.
+
+Для text error непустой text становится message. Иначе используется:
+
+```text
+HTTP error: <status> <statusText>
+```
+
+Network/CORS/abort errors глобального `fetch` пробрасываются без замены.
+
+### `FetchErrorReportContext`
+
+```ts
+type FetchErrorReportContext = {
+	input: RequestInfo;
+	init: RequestInitType;
+	baseUrlType: BaseURLType;
+	sapClient: string | null;
+};
+```
+
+Это public type технического контекста error reporting. Обычный consumer редко создаёт его вручную.
+
+## OData V2 JSON envelope
 
 ### `fetchODataJson`
 
 ```ts
-const response = await fetchODataJson<Order[]>(
-	"/Z_ORDER_SRV/OrderSet?$top=20",
-	{},
+async function fetchODataJson<T = unknown>(
+	input: RequestInfo,
+	init: RequestInitType = {},
+	baseUrlType: BaseURLType = "odata"
+): Promise<{
+	data: T;
+	totalCount?: number;
+}>;
+```
+
+Пример:
+
+```ts
+const response = await fetchODataJson<SalesOrderDto[]>(
+	"/Z_SALES_ORDER_SRV/SalesOrderSet?$inlinecount=allpages",
+	{ signal },
 	"odata"
 );
 
@@ -166,625 +1032,4111 @@ console.log(response.data);
 console.log(response.totalCount);
 ```
 
-Дополнительно выставляет OData V2 headers `DataServiceVersion: 2.0` и `MaxDataServiceVersion: 2.0`, разбирает JSON и снимает envelope:
+Перед отправкой добавляются:
 
-| Server payload | Result |
-| --- | --- |
-| `{ d: { results: rows, __count } }` | `{ data: rows, totalCount }` |
-| `{ d: record }` | `{ data: record }` |
-| raw JSON | `{ data: raw }` |
+```text
+DataServiceVersion: 2.0
+MaxDataServiceVersion: 2.0
+```
 
-Поле `__metadata` удаляется из каждого top-level record/одиночного `d`. Вложенные navigation records не очищаются рекурсивно.
+Остальные SAP headers и SSO/X-CSRF lifecycle выполняет `fetchBase`.
 
-Для `204/205` data содержит специальный marker. Проверяйте именно `response.data`:
+### Collection envelope
+
+Server:
+
+```json
+{
+	"d": {
+		"results": [
+			{
+				"__metadata": { "uri": "..." },
+				"OrderId": "42"
+			}
+		],
+		"__count": "125"
+	}
+}
+```
+
+Client result:
 
 ```ts
+{
+	data: [{ OrderId: "42" }],
+	totalCount: 125
+}
+```
+
+Правила:
+
+- `d.results` должен быть array;
+- каждый top-level record получает shallow copy без `__metadata`;
+- `d.__count` преобразуется через `Number`;
+- отсутствие `__count` даёт `totalCount: undefined`;
+- вложенные records не очищаются рекурсивно.
+
+Если `__count` содержит некорректную строку, результатом может быть `NaN`. Backend contract и consumer validation должны исключать это.
+
+### Single envelope
+
+Server:
+
+```json
+{
+	"d": {
+		"__metadata": { "uri": "..." },
+		"OrderId": "42"
+	}
+}
+```
+
+Client:
+
+```ts
+{
+	data: { OrderId: "42" }
+}
+```
+
+### Raw JSON fallback
+
+Если payload не содержит `d`, transport возвращает JSON как есть:
+
+```json
+{ "ok": true }
+```
+
+```ts
+{ data: { ok: true } }
+```
+
+Это позволяет использовать transport с SAP endpoint, который не оборачивает ответ в стандартный OData envelope.
+
+### Content-Type
+
+Если `Content-Type` содержит:
+
+```text
+application/json
+application/odata+json
+```
+
+используется `response.json()`.
+
+Если header другой, body сначала читается как text. Затем:
+
+1. HTML проверяется на SSO form.
+2. Неожиданный HTML превращается в transport error report и Error.
+3. Остальной text пробуется через `JSON.parse`.
+4. Если JSON parse невозможен, бросается ошибка unsupported content/body.
+
+Поэтому JSON с ошибочным `Content-Type: text/plain` всё ещё может быть разобран.
+
+### `204` и `205`
+
+Для response без body transport возвращает специальный marker в `data`.
+
+Проверка:
+
+```ts
+const response = await fetchODataJson<unknown>(url, init);
+
 if (isNoContentResponse(response.data)) {
 	return;
 }
+
+// Здесь response.data не является no-content marker.
+```
+
+Проверяйте `response.data`, не весь `response`:
+
+```ts
+// Неверно.
+isNoContentResponse(response);
+
+// Правильно.
+isNoContentResponse(response.data);
 ```
 
 ### `fetchJson`
 
 ```ts
-const rows = await fetchJson<Order[]>("/Z_ORDER_SRV/OrderSet");
+async function fetchJson<T = unknown>(
+	input: RequestInfo,
+	init: RequestInitType = {},
+	baseUrlType: BaseURLType = "odata"
+): Promise<T>;
 ```
 
-Возвращает только `data`, поэтому `totalCount` теряется. Generic задаёт ожидаемый compile-time type, но не валидирует server payload.
+Это короткая форма:
+
+```ts
+const response = await fetchODataJson<T>(input, init, baseUrlType);
+return response.data;
+```
+
+Пример:
+
+```ts
+const orders = await fetchJson<SalesOrderDto[]>(
+	"/Z_SALES_ORDER_SRV/SalesOrderSet"
+);
+```
+
+Ограничения:
+
+- `totalCount` теряется;
+- no-content marker типизируется как переданный generic;
+- generic не проверяет payload;
+- metadata target не проверяется.
+
+Если нужен paging count, используйте `fetchODataJson`, `odataFetch` или metadata-aware runner.
 
 ### `fetchQueryFn`
 
-Factory для raw `Response` с обязательным async transform:
+Factory создаёт функцию для TanStack Query или ручного вызова:
 
 ```ts
-const loadXml = fetchQueryFn("/sap/bc/example", {
-	baseUrl: "",
-	init: { headers: { Accept: "application/xml" } },
-	transform: (response) => response.text()
+const loadMetadataXml = fetchQueryFn("/Z_SALES_ORDER_SRV/$metadata", {
+	baseUrl: "odata",
+	init: {
+		headers: {
+			Accept: "application/xml"
+		}
+	},
+	transform: async (response) => response.text()
 });
 
-const xml = await loadXml({ signal });
+const xml = await loadMetadataXml({ signal });
 ```
 
-Переданный query signal используется только если `init.signal` отсутствует. Optional `swCache` добавляет `x-sw-cache`.
-
-`fetchJsonQueryFn`, `fetchJsonMutationFn` и `fetchDeleteFn` экспортируются для существующих consumers, но помечены deprecated. Новый generic REST код должен использовать `/http`, metadata-aware OData код — специализированные operations ниже.
-
-## `odataFetch` и query options
-
-`odataFetch` строит URL OData query, но не загружает metadata и не проверяет target:
+Options:
 
 ```ts
-const response = await odataFetch<Order, Order[]>(
-	"/Z_ORDER_SRV/OrderSet",
+{
+	init?: RequestInit;
+	baseUrl?: BaseURLType;
+	swCache?: string;
+	transform: (data: Response) => Promise<R>;
+}
+```
+
+Поведение signal:
+
+```text
+options.init.signal есть? ── да ──► используется он
+              │
+              нет
+              ▼
+params.signal есть? ─────── да ──► используется текущий signal
+```
+
+Для каждого запуска создаётся новый shallow `RequestInit`, поэтому отменённый signal предыдущего refetch не сохраняется в следующем запуске.
+
+Если `transform` отсутствует в runtime из-за unsafe cast/JavaScript, функция бросит:
+
+```text
+fetchQueryFn requires a transformation function!
+```
+
+`swCache` добавляет header `x-sw-cache`; сам transport не реализует Service Worker cache.
+
+## Низкоуровневый `odataFetch`
+
+```ts
+async function odataFetch<T, I = T>(
+	entitySetPath: string,
+	options: ODataFetchOptions<T> = {},
+	init: RequestInit = {}
+): Promise<{
+	data: I;
+	totalCount?: number;
+}>;
+```
+
+Здесь:
+
+- `T` типизирует field names в filter/sort/select/expand;
+- `I` описывает ожидаемый result `data`;
+- `entitySetPath` уже должен быть готовым OData path;
+- metadata автоматически не загружаются.
+
+### Полный пример
+
+```ts
+type SalesOrderRow = {
+	CompanyId: string;
+	OrderId: string;
+	Title: string;
+	Amount: string;
+	CreatedAt: string;
+	Customer: CustomerDto;
+};
+
+const response = await odataFetch<SalesOrderRow, SalesOrderRow[]>(
+	"/Z_SALES_ORDER_SRV/SalesOrderSet",
 	{
-		select: ["Id", "Title"],
+		expression: createFilterEqual<SalesOrderRow, string>(
+			"CompanyId",
+			"1000"
+		),
+		sorts: [
+			{ key: "CreatedAt", desc: true },
+			{ key: "OrderId" }
+		],
+		select: ["OrderId", "Title", "Amount", "CreatedAt"],
+		expand: ["Customer"],
 		top: 50,
 		skip: 0,
-		sorts: [{ key: "Title" }],
-		expression: createFilterEqual("Status", "OPEN"),
 		inlinecount: "allpages",
-		swCache: "ttl=10m;name=orders"
+		baseUrl: "odata",
+		swCache: "off"
 	},
 	{ signal }
 );
 ```
 
-`entitySetPath` должен содержать начальный `/`. Если в нём уже есть query string, новые options объединяются через `URLSearchParams`.
+Условно будет построен path:
 
-### `ODataFetchOptions`
+```text
+/Z_SALES_ORDER_SRV/SalesOrderSet
+  ?$filter=CompanyId eq '1000'
+  &$orderby=CreatedAt desc,OrderId asc
+  &$select=OrderId,Title,Amount,CreatedAt
+  &$expand=Customer
+  &$top=50
+  &$skip=0
+  &$inlinecount=allpages
+```
 
-| Поле | OData option |
-| --- | --- |
-| `expression` | `$filter`, строится `buildODataFilter` |
-| `sorts` | `$orderby`, строится `buildODataOrder` |
-| `select` | `$select`, ключи через запятую |
-| `expand` | `$expand`, ключи через запятую |
-| `top` | `$top` |
-| `skip` | `$skip` |
-| `inlinecount` | `$inlinecount` |
-| `baseUrl` | Выбор base URL |
-| `swCache` | Header `x-sw-cache` |
+`URLSearchParams` кодирует query string. В фактическом URL `$` может отображаться как `%24`, пробел — как `+` или percent encoding. Это нормально.
 
-Поле `format?: "json"` присутствует в текущем type, но request builder его не добавляет в URL. Не полагайтесь на него; JSON задаёт transport через Accept/OData parsing.
-
-Arrays `select`/`expand` и path values не проходят metadata validation. Для filter values используйте фабрики из `foundation-lib/odata-service`, а не ручную конкатенацию.
-
-## Metadata-aware operations
-
-Публичные factory-функции возвращают runner:
+### `expression`
 
 ```ts
-type Runner<T> = (context: {
+expression?: FilterExpression<T>;
+```
+
+Используйте filter factories `foundation-lib/odata-service`:
+
+```ts
+const expression = {
+	and: true,
+	filters: [
+		createFilterEqual<SalesOrderRow, string>("CompanyId", "1000"),
+		createFilterBetween<SalesOrderRow, Date>("CreatedAt", [dateFrom, dateTo])
+	]
+};
+```
+
+Не собирайте `$filter` ручной конкатенацией:
+
+```ts
+// Небезопасно и легко сломать quoting/escaping.
+const filter = `CompanyId eq '${userInput}'`;
+```
+
+`buildODataFilter` вызывается внутри `odataFetch`.
+
+### `sorts`
+
+```ts
+sorts?: Sort<keyof T>[];
+```
+
+```ts
+sorts: [
+	{ key: "CreatedAt", desc: true },
+	{ key: "OrderId" }
+]
+```
+
+`desc` имеет literal type `true`. Ascending задаётся отсутствием поля:
+
+```ts
+{ key: "OrderId" } // asc.
+```
+
+Не передавайте `{ desc: false }`, если точный TypeScript type это запрещает.
+
+### `select`
+
+```ts
+select?: (keyof T)[];
+```
+
+```ts
+select: ["OrderId", "Title"]
+```
+
+Values соединяются через запятую. Runtime metadata validation имён не выполняется.
+
+Пустой array создаст пустое значение option. Лучше вообще не передавать поле:
+
+```ts
+select: selectedFields.length ? selectedFields : undefined
+```
+
+### `expand`
+
+```ts
+expand?: (keyof T)[];
+```
+
+```ts
+expand: ["Customer"]
+```
+
+Helper только соединяет имена через запятую. Он не проверяет, является поле navigation property, и не делает deep `$select` syntax.
+
+### `top` и `skip`
+
+```ts
+top?: number;
+skip?: number;
+```
+
+`0` не отбрасывается:
+
+```ts
+{ top: 50, skip: 0 }
+```
+
+Helper не запрещает отрицательные, дробные, `NaN` и слишком большие values. Нормализуйте paging на application boundary.
+
+### `inlinecount`
+
+```ts
+inlinecount?: string;
+```
+
+Тип намеренно широкий. Для OData V2 paging обычно:
+
+```ts
+inlinecount: "allpages"
+```
+
+При корректном SAP response `d.__count` станет `totalCount`.
+
+### `format`
+
+```ts
+format?: "json";
+```
+
+Поле существует в public type, но текущий request builder не добавляет `$format` в URL. Не полагайтесь на него. JSON transport определяется headers и response parser-ом.
+
+### `baseUrl`
+
+```ts
+baseUrl?: BaseURLType;
+```
+
+Передаётся в `fetchODataJson`. Если отсутствует, transport использует `odata`.
+
+### `swCache`
+
+```ts
+swCache?: string;
+```
+
+Если value truthy, request получает:
+
+```text
+x-sw-cache: <value>
+```
+
+Если `init.headers` уже содержит `x-sw-cache`, option его перезапишет.
+
+### Existing query string
+
+Можно передать path с query:
+
+```ts
+await odataFetch("/Z_DEMO_SRV/Run?mode='full'", {
+	top: 10
+});
+```
+
+Helper сохраняет существующие параметры и добавляет OData options через `URLSearchParams`.
+
+Не передавайте fragment/hash: он не является частью HTTP query OData endpoint.
+
+### Trailing slash
+
+Trailing slash raw path удаляется:
+
+```text
+/Z_DEMO_SRV/EntitySet/  -> /Z_DEMO_SRV/EntitySet
+```
+
+### Что `odataFetch` не проверяет
+
+- существование service;
+- существование target;
+- обязательные parameters;
+- OData type parameters;
+- совместимость operation и target;
+- корректность select/expand field names;
+- runtime shape response.
+
+Для обычного application code предпочитайте metadata-aware helpers.
+
+## Metadata-aware operation helpers
+
+Публичные specialized helpers:
+
+```ts
+odataQueryFn
+odataReadFn
+odataCreateFn
+odataUpdateFn
+odataDeleteFn
+odataFunctionImportFn
+```
+
+Внутренний общий `odataFetchFn` не экспортируется public entrypoint. Не делайте deep import.
+
+### Runner contract
+
+Каждый helper возвращает функцию такого смысла:
+
+```ts
+type ODataRunner<TData> = (context: {
 	client: QueryClient;
 	signal?: AbortSignal;
-}) => Promise<{ data: T; totalCount?: number }>;
+}) => Promise<{
+	data: TData;
+	totalCount?: number;
+}>;
 ```
 
-Каждый runner:
-
-1. загружает/cache-ит `$metadata` через QueryClient;
-2. находит target в entities или function imports;
-3. проверяет совместимость operation;
-4. строит target path по metadata;
-5. выполняет transport;
-6. optional парсит значения по metadata;
-7. optional вызывает `transform`.
-
-### Выбор operation
-
-| Factory | Target | HTTP | Params | Body | Result |
-| --- | --- | --- | --- | --- | --- |
-| `odataQueryFn` | plain/parameterized Entity | GET | optional; у plain Entity игнорируются | нет | array или transform result |
-| `odataReadFn` | non-parameterized Entity | GET | обязательны | нет | single |
-| `odataCreateFn` | Entity | POST | запрещены | обязателен | single |
-| `odataUpdateFn` | Entity | PUT | обязательны | обязателен | single |
-| `odataDeleteFn` | Entity | DELETE | обязательны | нет | single/no-content contract backend-а |
-| `odataFunctionImportFn` | FunctionImport | из metadata | обязательны | нет | single |
-
-Body реально сериализуется только для truthy object/value. Для create/update используйте JSON object; `false`, `0`, `""` или `null` не подходят как body текущего helper-а.
-
-### Query списка
+Прямой вызов:
 
 ```ts
-import { odataQueryFn } from "@ryuzaki13/react-foundation-api/odata";
-import { wrapODataParams } from "@ryuzaki13/react-foundation-lib/odata-service";
-
-const loadOrders = odataQueryFn<OrderRaw, Order>({
-	odata: { service: "Z_ORDER_SRV", target: "OrderQuery" },
-	params: wrapODataParams({
-		CompanyId: "1000",
-		DateFrom: new Date("2026-01-01")
-	}),
-	options: {
-		top: 100,
-		select: ["Id", "Title", "CreatedAt"]
+const runner = odataReadFn<SalesOrderDto>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderSet"
 	},
-	autoParse: true,
-	transform: (rows) => rows.map(mapOrder)
-});
-```
-
-Для parameterized entity metadata определяет suffix `/Set` или `/Results`. Для plain entity `params` игнорируются; в dev выводится warning. Чтение конкретного key делайте `odataReadFn`.
-
-`transform` query может вернуть новый array или одно агрегированное значение:
-
-```ts
-const countOrders = odataQueryFn<OrderRaw, number>({
-	odata,
-	transform: (rows) => rows.length
-});
-```
-
-### Read, create, update, delete
-
-```ts
-const readOrder = odataReadFn<OrderRaw, Order>({
-	odata: { service: "Z_ORDER_SRV", target: "OrderSet" },
-	params: wrapODataParams({ Id: "42" }),
-	autoParse: true,
-	transform: mapOrder
-});
-
-const createOrder = odataCreateFn<OrderRaw, Order, CreateOrderBody>({
-	odata: { service: "Z_ORDER_SRV", target: "OrderSet" },
-	body: { Title: "Новый заказ" },
-	transform: mapOrder
-});
-
-const updateOrder = odataUpdateFn<OrderRaw, Order, UpdateOrderBody>({
-	odata: { service: "Z_ORDER_SRV", target: "OrderSet" },
-	params: wrapODataParams({ Id: "42" }),
-	body: { Title: "Изменённый заказ" },
-	transform: mapOrder
-});
-
-const deleteOrder = odataDeleteFn<unknown>({
-	odata: { service: "Z_ORDER_SRV", target: "OrderSet" },
-	params: wrapODataParams({ Id: "42" })
-});
-```
-
-### FunctionImport
-
-```ts
-const runAction = odataFunctionImportFn<ActionRaw, ActionResult>({
-	odata: { service: "Z_ORDER_SRV", target: "CloseOrder" },
-	params: wrapODataParams({ Id: "42" }),
-	transform: mapActionResult
-});
-```
-
-Target обязан находиться в metadata как FunctionImport. HTTP method берётся оттуда; отсутствие method приводит к ошибке. Entity нельзя вызвать через `odataFunctionImportFn`, FunctionImport — через entity factory.
-
-### `autoParse`
-
-При `autoParse: true` top-level fields преобразуются с помощью metadata columns, например OData date/number/ABAP-boolean-like значения. Для FunctionImport columns берутся из `resultEntity`, если она указана.
-
-Parser:
-
-- не валидирует наличие всех полей;
-- не делает deep-recursive parsing navigation objects;
-- сохраняет исходный object, если ни одно значение не изменилось;
-- не заменяет domain validation/mapping.
-
-### `options`, `init`, `swCache`
-
-Общие fields operation:
-
-- `odata: { service, target }`;
-- `options?: ODataFetchOptions`;
-- `init?: RequestInit` без `signal/method/body`;
-- `autoParse?: boolean`;
-- `swCache?: string`;
-- operation-specific `params`/`body`;
-- optional `transform`.
-
-Отдельный top-level `swCache` имеет приоритет добавления в итоговые query options. Signal приходит только в runner context.
-
-## TanStack Query и mutations
-
-### Query hook
-
-Runner структурно совместим с TanStack Query queryFn:
-
-```tsx
-const ordersQuery = useQuery({
-	queryKey: ["orders", companyId],
-	queryFn: odataQueryFn<OrderRaw, Order>({
-		odata: { service: "Z_ORDER_SRV", target: "OrderSet" },
-		options: {
-			expression: createFilterEqual("CompanyId", companyId)
-		},
-		transform: (rows) => rows.map(mapOrder)
+	params: wrapODataParams({
+		OrderId: "42"
 	})
 });
 
-const orders = ordersQuery.data?.data ?? [];
-```
-
-Query data — object `{ data, totalCount? }`, не сам array. Query key обязан включать все значения, влияющие на params/options/result.
-
-### Mutation hook
-
-Runner не является обычной `mutationFn(input)`: ему нужен `QueryClient`. Создайте operation из mutation input и вызовите runner явно:
-
-```tsx
-const queryClient = useQueryClient();
-
-const updateMutation = useMutation({
-	mutationFn: (input: UpdateOrderInput) =>
-		odataUpdateFn<OrderRaw, Order, UpdateOrderBody>({
-			odata: { service: "Z_ORDER_SRV", target: "OrderSet" },
-			params: wrapODataParams({ Id: input.id }),
-			body: mapUpdateBody(input),
-			transform: mapOrder
-		})({ client: queryClient }),
-	onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orders"] })
+const result = await runner({
+	client: queryClient,
+	signal: abortController.signal
 });
 ```
 
-Mutation cache не синхронизируется автоматически. Инвалидируйте/обновляйте query по policy ресурса.
-
-## DEV dry-run helpers
-
-Экспортируются:
-
-- `odataQueryFnDev`;
-- `odataReadFnDev`;
-- `odataCreateFnDev`;
-- `odataUpdateFnDev`;
-- `odataDeleteFnDev`;
-- `odataFunctionImportFnDev`.
-
-В `__DEV__` они:
-
-1. реально загружают metadata, если её нет в cache;
-2. валидируют target/operation;
-3. строят итоговый URL, headers preview и body;
-4. показывают warning notification и console group;
-5. не выполняют целевой data/write request;
-6. возвращают `{ data: [], totalCount: 0 }` для query или `{ data: undefined }` для single operation;
-7. не вызывают `transform`, потому что backend response отсутствует.
-
-В non-dev build Dev helper делегирует обычной реальной operation. Поэтому это инструмент предварительной проверки запроса, а не mock API и не безопасная замена backend test.
-
-Низкоуровневые `odataFetchFn`/`odataFetchFnDev` существуют внутри реализации, но не экспортируются публичным `/odata` entrypoint. Используйте специализированные helpers.
-
-## Metadata queries
-
-### `useODataMetadataQuery`
-
-```tsx
-const metadataQuery = useODataMetadataQuery({
-	service: "Z_ORDER_SRV"
-});
-```
-
-Загружает `/<service>/$metadata`, разбирает XML через `foundation-lib/odata-service` и хранит metadata с `staleTime: Infinity`, `gcTime: Infinity`, persisted query meta.
-
-Актуальность контролирует отдельный technical version query, если `metadataVersion` настроен в project adapter. Версия сравнивается с `dataUpdatedAt`; более новая server version инвалидирует только metadata нужного service.
-
-### `useODataMetadata`
-
-```tsx
-const { metadata, metadataUpdatedAt, isLoading } = useODataMetadata({
-	service: "Z_ORDER_SRV",
-	target: "OrderSet"
-});
-```
-
-Возвращает metadata одной Entity. Если target является FunctionImport, после загрузки hook бросит error. Ошибка metadata query также преобразуется в error во время render; используйте подходящий Error Boundary.
-
-### Imperative и options API
-
-| Export | Назначение |
-| --- | --- |
-| `fetchMetadata` | Query function raw metadata fetch/parse |
-| `odataMetadataQueryOptions` | Общие TanStack query options |
-| `getODataMetadataData` | `fetchQuery`, optional version sync, metadata result |
-| `useODataMetadataVersionQuery` | Только technical version query |
-| `applyODataMetadataVersion` | Применить уже полученную version к cache |
-
-Ошибка optional technical version-check не лишает `getODataMetadataData` уже сохранённых metadata: sync error подавляется, затем metadata читается снова.
-
-## OData collections
-
-Collections предназначены для code/text справочников с metadata semantic links.
-
-### Config
+### Общие options
 
 ```ts
-const organizationOData = {
-	service: "Z_REFERENCE_SRV",
-	target: "OrganizationSet",
-	limitedKeys: ["OrganizationCode"],
-	sortByCode: true,
-	excludeEmpty: true,
-	swCache: "ttl=forever;name=ref"
-} satisfies ODataCollectionConfig;
-```
-
-| Поле | Назначение |
-| --- | --- |
-| `service`, `target` | OData entity |
-| `limitedKeys` | Ограничить выбранные code fields; linked text fields добавляются автоматически |
-| `serverFilter` | `$filter` на сервере |
-| `clientFilter` | Filter после загрузки |
-| `excludeEmpty` | Исключение пустых code values в separated arrays |
-| `sortByCode` | `false` создаёт observer projection по text; cache остаётся canonical по code |
-| `hideCode` | UI contract для consumer controls |
-| `swCache` | SW policy, default `ttl=forever;name=ref` |
-
-### `useODataCollectionQuery`
-
-```tsx
-const collectionQuery = useODataCollectionQuery<OrganizationItem>(organizationOData);
-
-const items = collectionQuery.data?.items ?? [];
-const textKey = collectionQuery.data?.keyPairsMap.OrganizationCode;
-```
-
-Результат:
-
-```ts
-interface ODataCollectionResult<T> {
-	items: T[];
-	keyPairs: CollectionPair[];
-	keyPairsMap: Record<string, string>;
-	separated: Record<string, T[]>;
-	chain: { codeKey: string; count: number }[];
-	count: number;
-	cacheUpdatedAt: number;
+{
+	odata: {
+		service: string;
+		target: string;
+	};
+	options?: ODataFetchOptions<I>;
+	init?: Omit<RequestInit, "signal" | "method" | "body">;
+	autoParse?: boolean;
+	swCache?: string;
+	transform?: (...args) => output;
 }
 ```
 
-При загрузке служебные top-level fields `ID`, `CNT`, `__metadata`, `__Parameters` удаляются.
+Почему `init` не разрешает `signal`, `method`, `body`:
 
-Критические cache rules:
+- signal принадлежит конкретному запуску Query;
+- method определяется semantic operation и metadata;
+- body принадлежит create/update contract.
 
-- query key включает `service`, `target`, `limitedKeys`, `serverFilter` и внутреннюю version;
-- `sortByCode` не входит в key намеренно: text ordering — observer `select`;
-- `clientFilter` и `excludeEmpty` тоже не входят в key, хотя влияют на cached snapshot;
-- поэтому для одинакового service/target/limitedKeys/serverFilter все consumers должны использовать совместимые `clientFilter`/`excludeEmpty`; иначе первый fetch может задать общий snapshot с неожиданным составом;
-- `swCache` не является data identity.
+Это защищает от противоречивой конфигурации.
 
-Внутренняя collection loader сейчас логирует transport/parse error и возвращает пустой array. Поэтому query может иметь `isSuccess === true` и `items.length === 0` даже после ошибки сети. Если UI обязан отличать «пусто» от «ошибка», не используйте collection facade как единственный error signal или добавьте отдельную диагностику владельца.
+### `ODataFetchFnRequest`
 
-### SW cache и update list
+Public conditional type позволяет типизировать config по operation:
 
-Default policies:
+```ts
+type UpdateRequest = ODataFetchFnRequest<
+	"update",
+	SalesOrderDto,
+	SalesOrder,
+	UpdateSalesOrderBody,
+	{ OrderId: string }
+>;
+```
+
+Обычно его не нужно писать вручную: specialized helper выводит options type.
+
+### Generic parameters
+
+Упрощённо:
+
+| Helper | Generics |
+| --- | --- |
+| `odataQueryFn` | input row `I`, output `O`, params `P` |
+| `odataReadFn` | input `I`, output `O`, params `P` |
+| `odataCreateFn` | input response `I`, output `O`, body `T` |
+| `odataUpdateFn` | input response `I`, output `O`, body `T`, params `P` |
+| `odataDeleteFn` | input response `I`, output `O`, params `P` |
+| `odataFunctionImportFn` | input response `I`, output `O`, params `P` |
+
+`I` — не «тип backend, доказанный библиотекой». Это compile-time ожидание consumer-а. Runtime payload остаётся внешним значением.
+
+### Metadata target lookup
+
+Перед request helper получает service metadata и ищет `odata.target`:
 
 ```text
-collection data: ttl=forever;name=ref
-updates list:    ttl=4h;name=ref-updates
-bust:            bust=forever;name=ref
+metadata.entities[target]
+metadata.functionImports[target]
 ```
 
-Technical `collectionUpdates` возвращает entities, изменённые за последние семь дней. Collection сравнивает `lastChangedAt`, metadata update time, coverage window и `cacheUpdatedAt`. Если snapshot устарел, active query инвалидируется, а TTL policy преобразуется в bust.
+Ошибки:
 
-Экспортированы `useODataCollectionUpdatesQuery`, `odataCollectionUpdatesQueryOptions`, `fetchODataCollectionUpdates`, key factory, constants, `resolveODataCollectionSwCachePolicy` и `shouldRefreshODataCollectionCache` для тестов/диагностики.
+```text
+OData target '<name>' не был загружен
+```
 
-### `useODataCollectionModel`
+Если одно имя одновременно найдено как Entity и FunctionImport:
 
-```tsx
-const model = useODataCollectionModel({
-	codeKey: "OrganizationCode",
-	minSearchTextLength: 2,
-	maxVisibleItems: 100
+```text
+Найден конфликт metadata: '<name>' существует и как Entity, и как FunctionImport
+```
+
+### Operation compatibility
+
+| Metadata target | Разрешённые helpers |
+| --- | --- |
+| Plain Entity | query/read/create/update/delete |
+| Parameterized Entity с `result` | query/create/update/delete; read запрещён |
+| FunctionImport | только function import helper |
+
+Create/update/delete для parameterized Entity технически не запрещены общей validation только из-за `result`, но использовать их следует лишь если реальный SAP contract это поддерживает. Metadata и backend остаются источником истины.
+
+### Result и no-content
+
+Query обычно возвращает array. Single helpers возвращают single value.
+
+Для backend operation с `204/205` безопаснее типизировать data как `unknown` и проверить marker:
+
+```ts
+const result = await odataDeleteFn<unknown>({
+	odata,
+	params
+})({ client: queryClient });
+
+if (isNoContentResponse(result.data)) {
+	// Удаление успешно, response body отсутствует.
+}
+```
+
+Не ожидайте updated entity от endpoint, который документирован как no-content.
+
+## `odataQueryFn`: списки и parameterized query
+
+`odataQueryFn` — основной helper чтения коллекций.
+
+```ts
+const runner = odataQueryFn<I, O, P>({
+	odata,
+	params?,
+	options?,
+	init?,
+	autoParse?,
+	swCache?,
+	transform?
 });
 ```
 
-Заполняет отсутствующие значения default-ами store из `foundation-lib/odata` и фиксирует snapshot при первом render. Изменение входного model после mount не пересоздаёт normalized model.
+HTTP method всегда `GET`.
 
-### `useODataCollection`
-
-```tsx
-const collection = useODataCollection({
-	odata: organizationOData,
-	model,
-	pageSize: 50
-});
-
-const visible = collection.getItems(
-	(code, text) => code.includes(search) || text.includes(search),
-	selectedItems
-);
-```
-
-Возвращает indexes и UI helpers:
-
-- `itemsMap`, `orderedKeys`, `separatedItems`;
-- `getItems(predicate?, selected?)` с `maxVisibleItems`;
-- `getPage(pageIndex)`;
-- `findSourceItemsByKeys(field, keys)`;
-- `setFilteredItems` для dependency filter;
-- `buildSearchIndex(field)` по prefixes длиной 1–5;
-- `debounce(key, fn, delay)`;
-- `codeKey`, `textKey`, `totalCount`, status.
-
-Параметр `filter` присутствует в type props, но текущая реализация его не применяет. Не полагайтесь на него; используйте `clientFilter` config или predicate `getItems`. `refetch` и `invalidate` результата deprecated.
-
-`useODataCollectionChains` подписывается на QueryCache для набора collection keys и возвращает map chain по `service.target`.
-
-### Query key factories
+### Plain Entity query
 
 ```ts
-createODataCollectionBaseQueryKey();
-createODataCollectionQueryKey(config);
-```
-
-Используйте их для точной инвалидации вместо ручного копирования array key.
-
-## Зависимые segments
-
-Типы `ODataDependentBaseProps`, `ODataDependentSegment`, `ODataDependentSegmentItem` описывают несколько связанных справочников/levels.
-
-```ts
-const items = flattenODataDependentServices(services);
-```
-
-Каждый segment превращается в отдельный item с:
-
-- `id` = codeKey;
-- `serviceKey` = `service.target`;
-- исходными `serviceIndex`/`segmentIndex`;
-- normalized model с `codeKey`;
-- `panelVisibility`, default `user`.
-
-```ts
-const ordered = sortODataDependentSegmentItemsByChains(
-	items,
-	chains,
-	userOrderIds
-);
-```
-
-Сначала учитывается service order и server chain, затем optional user override поднимает валидные уникальные IDs вверх, сохраняя относительный порядок остальных.
-
-`sortODataDependentServicesByChains` выполняет старую service-level форму и deprecated. Для нового кода используйте flatten + `sortODataDependentSegmentItemsByChains`.
-
-## Table columns
-
-`useODataTableColumns` связывает OData entity metadata с table helpers из `foundation-lib/table`.
-
-### Build mode
-
-```tsx
-const { columns, defaultColumnVisibility, isLoading } = useODataTableColumns<Order>({
-	mode: "build",
-	service: "Z_ORDER_SRV",
-	target: "OrderSet",
-	resolveHeader: (column) => column.label ?? column.id,
-	resolveVisible: (column) => !column.hidden,
-	resolveFormatting: (column) => resolveFormatting(column)
+const loadOrders = odataQueryFn<SalesOrderDto>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderSet"
+	},
+	options: {
+		top: 50,
+		inlinecount: "allpages"
+	}
 });
 ```
 
-Генерирует leaf columns по metadata и стартовую visibility map.
+Path:
 
-### Enrich mode
+```text
+/Z_SALES_ORDER_SRV/SalesOrderSet?$top=50&$inlinecount=allpages
+```
 
-```tsx
-const result = useODataTableColumns<Order>({
-	mode: "enrich",
-	service: "Z_ORDER_SRV",
-	target: "OrderSet",
-	columns: applicationColumns
+Для plain Entity `params` игнорируются:
+
+```ts
+odataQueryFn({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderSet"
+	},
+	params: wrapODataParams({ OrderId: "42" })
 });
 ```
 
-Сохраняет существующую структуру columns, добавляет metadata formatting role/type и возвращает visibility только для совпавших stable leaf IDs. Пока metadata грузятся, build mode возвращает `[]`, enrich mode — shallow copy исходных columns.
+Это не прочитает entity `42`; request останется collection query. В dev runtime выводится `console.warn`.
 
-## SSO и X-CSRF lifecycle
+Для одной entity используйте `odataReadFn`.
 
-### X-CSRF
-
-Для SAP write method (не GET/HEAD) transport:
-
-1. определяет CSRF scope по service/base URL/SAP client;
-2. переиспользует token из module cache;
-3. объединяет параллельные token fetch одного scope;
-4. делает GET с `x-csrf-token: Fetch`;
-5. добавляет token к write;
-6. на `401/403` один раз сбрасывает token и повторяет write.
-
-Token cache живёт в памяти tab/process. Публичного reset API нет.
-
-### SSO
-
-Transport распознаёт opaque redirect или HTML form с `SAMLRequest`/`SAMLResponse`, создаёт `SsoRequiredError` и пытается восстановить session в hidden iframe. Параллельные requests ждут общий recovery gate.
+### Parameterized Entity query
 
 ```ts
-try {
-	await fetchJson("/Z_SERVICE_SRV/EntitySet");
-} catch (error) {
-	if (error instanceof SsoRequiredError) {
-		showLoginExpired(error.message);
+type ReportParams = {
+	CompanyId: string;
+	DateFrom: Date;
+	DateTo: Date;
+};
+
+const loadReport = odataQueryFn<ReportRowDto, ReportRow, ReportParams>({
+	odata: {
+		service: "Z_REPORT_SRV",
+		target: "SalesReport"
+	},
+	params: wrapODataParams({
+		CompanyId: "1000",
+		DateFrom: new Date(2026, 0, 1),
+		DateTo: new Date(2026, 0, 31)
+	}),
+	options: {
+		top: 100,
+		inlinecount: "allpages"
+	},
+	autoParse: true,
+	transform: (rows) => rows.map(mapReportRow)
+});
+```
+
+Если metadata target содержит `result: "Results"`, path будет похож на:
+
+```text
+/Z_REPORT_SRV/SalesReport(
+  CompanyId='1000',
+  DateFrom=datetime'2026-01-01T00:00:00',
+  DateTo=datetime'2026-01-31T00:00:00'
+)/Results?$top=100&$inlinecount=allpages
+```
+
+Parameters форматируются по metadata, поэтому нужен `wrapODataParams`.
+
+### Query transform в array
+
+```ts
+const runner = odataQueryFn<SalesOrderDto, SalesOrder>({
+	odata,
+	transform: (rows, targetMetadata) => {
+		console.log(targetMetadata);
+		return rows.map(mapSalesOrder);
+	}
+});
+```
+
+Result:
+
+```ts
+Promise<{
+	data: SalesOrder[];
+	totalCount?: number;
+}>
+```
+
+### Query transform в одно значение
+
+```ts
+const runner = odataQueryFn<SalesOrderDto, number>({
+	odata,
+	transform: (rows) => rows.reduce(
+		(sum, row) => sum + row.Amount,
+		0
+	)
+});
+```
+
+Result data — number:
+
+```ts
+const result = await runner({ client: queryClient });
+console.log(result.data);
+```
+
+`totalCount` при этом всё ещё описывает server collection, а не агрегированный output transform.
+
+### Query и `204`
+
+Collection query по нормальному OData contract должен возвращать JSON body. Если backend вернул no-content, рассматривайте это как protocol anomaly:
+
+```ts
+const result = await runner({ client: queryClient });
+
+if (isNoContentResponse(result.data)) {
+	throw new Error("Collection query вернул ответ без body");
+}
+```
+
+## `odataReadFn`: одна Entity
+
+`odataReadFn` читает одну Entity по key/parameters.
+
+```ts
+const runner = odataReadFn<I, O, P>({
+	odata,
+	params,
+	options?,
+	init?,
+	autoParse?,
+	swCache?,
+	transform?
+});
+```
+
+HTTP method — `GET`.
+
+### Простой key
+
+```ts
+type SalesOrderKey = {
+	OrderId: string;
+};
+
+const readSalesOrder = odataReadFn<
+	SalesOrderDto,
+	SalesOrder,
+	SalesOrderKey
+>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderSet"
+	},
+	params: wrapODataParams({
+		OrderId: "42"
+	}),
+	autoParse: true,
+	transform: (dto) => mapSalesOrder(dto)
+});
+```
+
+Path:
+
+```text
+/Z_SALES_ORDER_SRV/SalesOrderSet(OrderId='42')
+```
+
+### Составной key
+
+```ts
+const readItem = odataReadFn<OrderItemDto>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderItemSet"
+	},
+	params: wrapODataParams({
+		OrderId: "42",
+		ItemNo: "10"
+	})
+});
+```
+
+Path:
+
+```text
+/Z_SALES_ORDER_SRV/SalesOrderItemSet(OrderId='42',ItemNo='10')
+```
+
+Точный порядок, mandatory rules, quoting и OData literals определяет metadata builder из `foundation-lib/odata-service`.
+
+### Почему нельзя передать обычный object
+
+Неверно:
+
+```ts
+odataReadFn({
+	odata,
+	params: {
+		OrderId: "42"
+	}
+});
+```
+
+Правильно:
+
+```ts
+params: wrapODataParams({
+	OrderId: "42"
+})
+```
+
+Обёртка `{ value }` отделяет OData parameter contract от произвольного JS object и позволяет metadata builder обработать optional/formatter semantics.
+
+### Parameterized Entity запрещена
+
+Если metadata Entity содержит `result`, `odataReadFn` бросит ошибку:
+
+```text
+OData operation 'read' несовместима с parameterized query entity ...
+Для target с result='Results' используйте method: 'query'.
+```
+
+Используйте `odataQueryFn` с params.
+
+### Query options у read
+
+`options` поддерживаются и для read:
+
+```ts
+odataReadFn<SalesOrderDto>({
+	odata,
+	params,
+	options: {
+		select: ["OrderId", "Title"],
+		expand: ["Customer"]
+	}
+});
+```
+
+Но `$top`, `$skip`, `$inlinecount` обычно не имеют смысла для одной entity. Используйте только options, поддерживаемые backend contract.
+
+## `odataCreateFn`: создание
+
+`odataCreateFn` создаёт Entity.
+
+```ts
+const runner = odataCreateFn<I, O, T>({
+	odata,
+	body,
+	options?,
+	init?,
+	autoParse?,
+	swCache?,
+	transform?
+});
+```
+
+HTTP method — `POST`.
+
+### Типы body и response отдельно
+
+```ts
+type CreateSalesOrderBody = {
+	CompanyId: string;
+	Title: string;
+};
+
+type CreatedSalesOrderDto = {
+	OrderId: string;
+	CompanyId: string;
+	Title: string;
+	CreatedAt: Date;
+};
+
+const createSalesOrder = odataCreateFn<
+	CreatedSalesOrderDto,
+	SalesOrder,
+	CreateSalesOrderBody
+>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderSet"
+	},
+	body: {
+		CompanyId: "1000",
+		Title: "Новый заказ"
+	},
+	autoParse: true,
+	transform: mapSalesOrder
+});
+```
+
+Path/body:
+
+```text
+POST /Z_SALES_ORDER_SRV/SalesOrderSet
+Content-Type: application/json
+
+{"CompanyId":"1000","Title":"Новый заказ"}
+```
+
+### `params` запрещены
+
+Create path строится без entity params:
+
+```text
+/SERVICE/ENTITY
+```
+
+Если backend публикует «создание» как FunctionImport, используйте `odataFunctionImportFn`, а не пытайтесь добавить params к create.
+
+### Body должен быть JSON-compatible
+
+Body сериализуется `JSON.stringify`.
+
+Ошибки:
+
+- cyclic object → исключение;
+- `BigInt` → исключение;
+- function/symbol/undefined fields → удаляются по правилам JSON;
+- Date → ISO string стандартного `Date.toJSON`, если body mapper не преобразовал её иначе.
+
+Кроме того, текущий helper сериализует body только если value truthy. Используйте object body. Не используйте корневые `0`, `false`, `""` или `null` как create payload.
+
+### Response может отличаться от body
+
+Не пишите один тип автоматически для обоих, если backend добавляет поля:
+
+```ts
+odataCreateFn<CreatedDto, DomainEntity, CreateBody>(...);
+```
+
+Это сохраняет связь:
+
+```text
+CreateBody -> SAP -> CreatedDto -> transform -> DomainEntity
+```
+
+## `odataUpdateFn`: обновление
+
+`odataUpdateFn` обновляет Entity по key/params и body.
+
+```ts
+const runner = odataUpdateFn<I, O, T, P>({
+	odata,
+	params,
+	body,
+	options?,
+	init?,
+	autoParse?,
+	swCache?,
+	transform?
+});
+```
+
+HTTP method — `PUT`.
+
+```ts
+type UpdateSalesOrderBody = {
+	Title: string;
+};
+
+type SalesOrderKey = {
+	OrderId: string;
+};
+
+const updateSalesOrder = odataUpdateFn<
+	SalesOrderDto,
+	SalesOrder,
+	UpdateSalesOrderBody,
+	SalesOrderKey
+>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderSet"
+	},
+	params: wrapODataParams({
+		OrderId: "42"
+	}),
+	body: {
+		Title: "Изменённый заказ"
+	},
+	autoParse: true,
+	transform: mapSalesOrder
+});
+```
+
+Request:
+
+```text
+PUT /Z_SALES_ORDER_SRV/SalesOrderSet(OrderId='42')
+
+{"Title":"Изменённый заказ"}
+```
+
+`PUT` зафиксирован текущей реализацией. Helper не поддерживает отдельную semantic PATCH/MERGE operation. Если backend требует другой contract, используйте опубликованную FunctionImport или согласованное расширение package owner; не подменяйте method через `init`.
+
+Write автоматически проходит X-CSRF lifecycle.
+
+## `odataDeleteFn`: удаление
+
+`odataDeleteFn` удаляет Entity по key/params.
+
+```ts
+const runner = odataDeleteFn<I, O, P>({
+	odata,
+	params,
+	options?,
+	init?,
+	autoParse?,
+	swCache?,
+	transform?
+});
+```
+
+HTTP method — `DELETE`. Body не поддерживается.
+
+```ts
+const deleteSalesOrder = odataDeleteFn<unknown>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "SalesOrderSet"
+	},
+	params: wrapODataParams({
+		OrderId: "42"
+	})
+});
+
+const result = await deleteSalesOrder({ client: queryClient });
+
+if (isNoContentResponse(result.data)) {
+	// Нормальный DELETE без response body.
+}
+```
+
+Request:
+
+```text
+DELETE /Z_SALES_ORDER_SRV/SalesOrderSet(OrderId='42')
+```
+
+Delete success не удаляет query cache автоматически. Consumer обязан применить `setQueryData` или scoped invalidation.
+
+## `odataFunctionImportFn`: FunctionImport
+
+FunctionImport helper используется только когда `target` объявлен в metadata как FunctionImport.
+
+```ts
+const runner = odataFunctionImportFn<I, O, P>({
+	odata,
+	params,
+	options?,
+	init?,
+	autoParse?,
+	swCache?,
+	transform?
+});
+```
+
+### HTTP method из metadata
+
+В отличие от entity helpers, method не выбирает consumer:
+
+```xml
+<FunctionImport Name="CloseOrder" m:HttpMethod="POST" ... />
+```
+
+Helper использует `POST`.
+
+Если `httpMethod` отсутствует:
+
+```text
+FunctionImport 'CloseOrder' не содержит httpMethod в metadata,
+поэтому operation 'fi' выполнить нельзя.
+```
+
+### POST FunctionImport
+
+```ts
+type CloseOrderParams = {
+	OrderId: string;
+	Reason: string;
+};
+
+type CloseOrderDto = {
+	OrderId: string;
+	Status: string;
+};
+
+const closeOrder = odataFunctionImportFn<
+	CloseOrderDto,
+	SalesOrderStatus,
+	CloseOrderParams
+>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "CloseOrder"
+	},
+	params: wrapODataParams({
+		OrderId: "42",
+		Reason: "completed"
+	}),
+	transform: (dto) => ({
+		orderId: dto.OrderId,
+		status: dto.Status
+	})
+});
+```
+
+Условный path:
+
+```text
+/Z_SALES_ORDER_SRV/CloseOrder?OrderId='42'&Reason='completed'
+```
+
+Body не передаётся: FunctionImport parameters находятся в URL по metadata contract.
+
+### GET FunctionImport
+
+```ts
+const loadStatistics = odataFunctionImportFn<StatisticsDto>({
+	odata: {
+		service: "Z_SALES_ORDER_SRV",
+		target: "GetStatistics"
+	},
+	params: wrapODataParams({
+		CompanyId: "1000"
+	})
+});
+```
+
+Если metadata объявляет GET, X-CSRF token не нужен.
+
+### FunctionImport result metadata
+
+Если FunctionImport содержит `resultEntity`, `autoParse` использует columns этой Entity.
+
+Если `resultEntity` отсутствует или не найден, `autoParse` молча оставляет payload без metadata conversion. Это не ошибка: FunctionImport может возвращать primitive/raw structure.
+
+### Несовместимые helpers
+
+Entity helper для FunctionImport:
+
+```text
+OData operation 'create' несовместима с FunctionImport 'CloseOrder'.
+Для FunctionImport используйте method: 'fi'.
+```
+
+FunctionImport helper для Entity:
+
+```text
+OData operation 'fi' несовместима с Entity 'SalesOrderSet'.
+```
+
+## `autoParse` и `transform`
+
+Это два последовательных, но разных этапа.
+
+```text
+raw OData JSON
+      │
+      ▼
+autoParse по metadata
+      │
+      ▼
+metadata-parsed DTO-like value
+      │
+      ▼
+transform consumer-а
+      │
+      ▼
+domain/result value
+```
+
+### Без `autoParse`
+
+SAP может вернуть:
+
+```ts
+{
+	FLAG: "X",
+	AMOUNT: "10.5",
+	CREATED_AT: "/Date(1773090000000)/"
+}
+```
+
+Без `autoParse` transform увидит strings:
+
+```ts
+odataQueryFn<{
+	FLAG: string;
+	AMOUNT: string;
+	CREATED_AT: string;
+}>({
+	odata,
+	transform: (rows) => {
+		console.log(typeof rows[0]?.FLAG); // "string".
+		console.log(typeof rows[0]?.AMOUNT); // "string".
+		return rows;
+	}
+});
+```
+
+### С `autoParse`
+
+Если metadata columns описывают ABAP boolean-like, decimal и datetime:
+
+```ts
+odataQueryFn<{
+	FLAG: boolean;
+	AMOUNT: number;
+	CREATED_AT: Date;
+}>({
+	odata,
+	autoParse: true
+});
+```
+
+Ожидаемое runtime представление:
+
+```ts
+{
+	FLAG: true,
+	AMOUNT: 10.5,
+	CREATED_AT: new Date(...)
+}
+```
+
+### Что именно парсится
+
+Для каждого column metadata строится план из:
+
+- `id`;
+- base type;
+- `abapBooleanLike`.
+
+Затем преобразуются только собственные top-level поля, которые реально есть в record.
+
+Поддерживаемые смысловые conversions определяет `odataParseValueByMetadata` из `foundation-lib/odata-service`, в том числе:
+
+- boolean/ABAP boolean-like;
+- integer/float/decimal/double;
+- datetime/datetimeOffset/time;
+- string-like values остаются string.
+
+### Shallow parsing
+
+Не выполняется deep recursion:
+
+```ts
+{
+	AMOUNT: "10.5",        // Может стать number.
+	Customer: {
+		LIMIT: "1000"       // Вложенное поле автоматически не парсится.
 	}
 }
 ```
 
-`SsoRequiredError` содержит `form?`, `recoveryUrl?`, `recoverable`. После неуспешного automatic recovery ошибка становится unrecoverable до успешного общего recovery/session reset flow.
+### Structural sharing
 
-Низкоуровневые helpers:
+Если conversion не изменил ни одного field, сохраняется исходный object reference.
 
-- `isSsoForm(form)` проверяет наличие SAML input;
-- `submitSsoForm(form)` вручную submit-ит форму в hidden iframe и возвращает boolean;
-- `recoverSsoSession({ form, recoveryUrl })` дедуплицирует recovery Promise.
+Для array создаётся копия только когда хотя бы один record изменился. Это помогает TanStack Query structural sharing, но consumer не должен строить бизнес-логику на identity implementation detail.
 
-Они требуют browser `window`/`document`; на server recovery возвращает `false`.
+### `transform`
 
-## Ошибки и ограничения
+Single operation transform:
 
-### HTTP/error body
+```ts
+(data, targetMetadata) => output
+```
 
-- JSON error пытается собрать уникальные `error.code`, `error.message`, `details`, `message`.
-- Непустой text становится Error message.
-- HTML SAML form запускает SSO flow.
-- Неожиданный HTML без SAML form регистрируется как error report и отклоняется.
-- Unsupported non-JSON text/content type отклоняется.
-- Network/CORS/abort errors пробрасываются.
+Query transform:
 
-### Практические ограничения
+```ts
+(rows, targetMetadata) => output[] | output
+```
 
-- Generic types не проверяют payload; используйте runtime validator на boundary.
-- Metadata cache бесконечный по времени и зависит от optional version endpoint или ручной invalidation.
-- OData transport в первую очередь browser/SAP-oriented: cookies, proxy, compile-time constants и iframe SSO должны быть настроены host-ом.
-- Не помещайте персональные/секретные response в общий SW cache без изоляции.
-- FunctionImport side effects определяются metadata HTTP method; query/mutation cache policy задаёт consumer.
-- `odataFetch` не знает metadata и не заменяет specialized operations для сложных entity paths.
-- Collection facade подавляет loader errors в пустой result — учитывайте это в UX.
-- `submitSsoForm` — низкоуровневый browser side effect; обычный consumer должен позволить transport самому управлять recovery.
+Transform вызывается после `autoParse`.
 
-## Полный публичный API
+```ts
+const runner = odataQueryFn<SalesOrderDto, SalesOrder>({
+	odata,
+	autoParse: true,
+	transform: (rows, target) => {
+		console.log(target.title);
+		return rows.map(mapSalesOrder);
+	}
+});
+```
 
-### Transport и URL
+### Generics не являются validation
 
-| Группа | Exports |
+Этот код компилируется:
+
+```ts
+odataQueryFn<{ Amount: number }>({
+	odata
+});
+```
+
+Но backend может вернуть:
+
+```json
+{ "Amount": "not-a-number" }
+```
+
+TypeScript не видит сеть. Для строгой boundary начните с `unknown`:
+
+```ts
+import { isRecord } from "@ryuzaki13/react-foundation-lib/validators";
+
+function parseSalesOrder(value: unknown): SalesOrder {
+	if (!isRecord(value)) {
+		throw new Error("SalesOrder должен быть object");
+	}
+
+	if (typeof value.OrderId !== "string") {
+		throw new Error("SalesOrder.OrderId должен быть string");
+	}
+
+	if (typeof value.Amount !== "number") {
+		throw new Error("SalesOrder.Amount должен быть number");
+	}
+
+	return {
+		id: value.OrderId,
+		title: typeof value.Title === "string" ? value.Title : "",
+		amount: value.Amount,
+		createdAt: value.CreatedAt instanceof Date
+			? value.CreatedAt
+			: new Date(0)
+	};
+}
+
+const runner = odataQueryFn<unknown, SalesOrder>({
+	odata,
+	autoParse: true,
+	transform: (rows) => rows.map(parseSalesOrder)
+});
+```
+
+Для критичного contract вместо fallback `new Date(0)` лучше бросить validation error. Пример показывает только технику narrowing.
+
+### Где держать mapping
+
+- Generic metadata conversion — `foundation-api/odata`.
+- DTO validation — API boundary владельца entity/feature.
+- DTO-to-domain mapping — entity/feature приложения.
+- Display formatting — formatter/UI owner.
+
+Не переносите SAP-specific domain mapper в foundation package.
+
+## TanStack Query: чтение
+
+### Provider обязателен
+
+Hooks и metadata-aware runners используют `QueryClient`.
+
+```tsx
+<QueryClientProvider client={queryClient}>
+	<App />
+</QueryClientProvider>
+```
+
+Вызов hook вне provider приведёт к ошибке TanStack Query.
+
+### Query key — identity данных
+
+Query key должен включать всё, что влияет на response:
+
+```ts
+const salesOrderKeys = {
+	all: ["sales-orders"] as const,
+	detail: (id: string) =>
+		[...salesOrderKeys.all, "detail", id] as const,
+	list: (params: {
+		companyId: string;
+		dateFrom: string;
+		dateTo: string;
+		skip: number;
+		top: number;
+	}) => [...salesOrderKeys.all, "list", params] as const
+};
+```
+
+Нормализуйте Date в string:
+
+```ts
+const keyParams = {
+	companyId: companyId.trim(),
+	dateFrom: dateFrom.toISOString(),
+	dateTo: dateTo.toISOString(),
+	skip,
+	top
+};
+```
+
+Не кладите в key:
+
+- token;
+- cookie;
+- QueryClient;
+- function;
+- DOM node;
+- огромный response body;
+- mutable object, меняющийся после передачи.
+
+### Переиспользуемые `queryOptions`
+
+```ts
+export function salesOrderQueryOptions(params: SalesOrderListParams) {
+	const normalized = normalizeSalesOrderListParams(params);
+
+	return queryOptions({
+		queryKey: salesOrderKeys.list(normalized.key),
+		queryFn: odataQueryFn<SalesOrderDto, SalesOrder>({
+			odata: SALES_ORDER_ODATA,
+			options: {
+				expression: buildSalesOrderFilter(normalized),
+				sorts: normalized.sorts,
+				top: normalized.top,
+				skip: normalized.skip,
+				inlinecount: "allpages"
+			},
+			autoParse: true,
+			transform: (rows) => rows.map(mapSalesOrder)
+		}),
+		staleTime: 60_000
+	});
+}
+```
+
+Один factory можно использовать:
+
+```ts
+useQuery(salesOrderQueryOptions(params));
+
+queryClient.fetchQuery(salesOrderQueryOptions(params));
+
+queryClient.ensureQueryData(salesOrderQueryOptions(params));
+```
+
+Это предотвращает расхождение key/query function между component и loader.
+
+### Result envelope в Query cache
+
+По умолчанию cache data:
+
+```ts
+{
+	data: SalesOrder[];
+	totalCount?: number;
+}
+```
+
+Component:
+
+```tsx
+const query = useQuery(salesOrderQueryOptions(params));
+
+const rows = query.data?.data ?? [];
+const totalCount = query.data?.totalCount ?? rows.length;
+```
+
+Не используйте `rows.length` как общее количество при server paging.
+
+### `select` TanStack Query
+
+Можно дать UI только rows:
+
+```tsx
+const query = useQuery({
+	...salesOrderQueryOptions(params),
+	select: (result) => result.data
+});
+```
+
+Но `totalCount` станет недоступен этому observer. Для table paging лучше сохранить envelope.
+
+### Conditional query
+
+```tsx
+const query = useQuery({
+	...salesOrderQueryOptions(params),
+	enabled: Boolean(companyId)
+});
+```
+
+Не вызывайте `useQuery` условно:
+
+```tsx
+// Неверно: нарушает Rules of Hooks.
+if (companyId) {
+	useQuery(...);
+}
+```
+
+### AbortSignal
+
+TanStack Query передаёт signal в runner автоматически:
+
+```text
+component unmount / query cancellation / refetch replacement
+                        │
+                        ▼
+                AbortSignal queryFn
+                        │
+                        ▼
+                  OData fetch
+```
+
+Не сохраняйте signal в module state или долгоживущее closure.
+
+При ручном вызове:
+
+```ts
+const controller = new AbortController();
+
+const promise = runner({
+	client: queryClient,
+	signal: controller.signal
+});
+
+controller.abort();
+await promise;
+```
+
+Abort обычно приводит к rejection от `fetch`. Не превращайте его автоматически в пустой array без явной UX policy.
+
+### Paging
+
+```ts
+const pageSize = 50;
+const pageIndex = 2;
+
+const options = {
+	top: pageSize,
+	skip: pageIndex * pageSize,
+	inlinecount: "allpages"
+};
+```
+
+`top`, `skip`, filters и sorts должны входить в query key.
+
+### Infinite query
+
+Direct runner не получает `pageParam`, потому что его runtime contract использует только `client` и `signal`. Оберните его:
+
+```tsx
+const pageSize = 50;
+
+const query = useInfiniteQuery({
+	queryKey: [...salesOrderKeys.all, "infinite", normalizedFilters],
+	initialPageParam: 0,
+	queryFn: ({ client, signal, pageParam }) =>
+		odataQueryFn<SalesOrderDto, SalesOrder>({
+			odata: SALES_ORDER_ODATA,
+			options: {
+				expression: buildSalesOrderFilter(normalizedFilters),
+				top: pageSize,
+				skip: pageParam * pageSize,
+				inlinecount: "allpages"
+			},
+			transform: (rows) => rows.map(mapSalesOrder)
+		})({ client, signal }),
+	getNextPageParam: (lastPage, pages) => {
+		const loaded = pages.reduce(
+			(sum, page) => sum + page.data.length,
+			0
+		);
+
+		if (lastPage.totalCount !== undefined && loaded >= lastPage.totalCount) {
+			return undefined;
+		}
+
+		return pages.length;
+	}
+});
+```
+
+Для backend, который не возвращает count, остановку нужно определять другим подтверждённым правилом, например `lastPage.data.length < pageSize`.
+
+### Ошибки query
+
+```tsx
+if (query.isError) {
+	return <ErrorState error={query.error} />;
+}
+```
+
+Не показывайте пользователю raw SAP error payload целиком. UI message должен быть безопасным, а technical diagnostics — централизованным.
+
+Не копируйте `query.data` в local state через effect:
+
+```tsx
+// Нежелательно: создаёт второй источник backend state.
+useEffect(() => {
+	setRows(query.data?.data ?? []);
+}, [query.data]);
+```
+
+Используйте Query data напрямую. Local state оставьте для draft/selection/interaction.
+
+## TanStack Query: mutations и cache
+
+Metadata-aware write runner нельзя передать напрямую как обычную `mutationFn(input)`, потому что runner ожидает `{ client, signal? }`.
+
+Получите текущий client:
+
+```tsx
+const queryClient = useQueryClient();
+```
+
+И создавайте operation из mutation input.
+
+### Create mutation + invalidation
+
+```tsx
+type CreateSalesOrderInput = {
+	companyId: string;
+	title: string;
+};
+
+const createMutation = useMutation({
+	mutationFn: (input: CreateSalesOrderInput) =>
+		odataCreateFn<SalesOrderDto, SalesOrder, CreateSalesOrderBody>({
+			odata: SALES_ORDER_ODATA,
+			body: {
+				CompanyId: input.companyId,
+				Title: input.title
+			},
+			autoParse: true,
+			transform: mapSalesOrder
+		})({ client: queryClient }),
+	onSuccess: async () => {
+		await queryClient.invalidateQueries({
+			queryKey: salesOrderKeys.all
+		});
+	}
+});
+```
+
+`onSuccess` получает runner result:
+
+```ts
+onSuccess: async (result) => {
+	const created = result.data;
+	console.log(created.id);
+}
+```
+
+### Update mutation + точечный cache update
+
+Если backend возвращает актуальную Entity, можно обновить detail query без refetch:
+
+```tsx
+const updateMutation = useMutation({
+	mutationFn: (input: UpdateSalesOrderInput) =>
+		odataUpdateFn<SalesOrderDto, SalesOrder, UpdateSalesOrderBody>({
+			odata: SALES_ORDER_ODATA,
+			params: wrapODataParams({
+				OrderId: input.id
+			}),
+			body: {
+				Title: input.title
+			},
+			autoParse: true,
+			transform: mapSalesOrder
+		})({ client: queryClient }),
+	onSuccess: (result, input) => {
+		queryClient.setQueryData(
+			salesOrderKeys.detail(input.id),
+			result
+		);
+	}
+});
+```
+
+Важно: если detail query хранит runner envelope, записывайте `result`, а не `result.data`. Cache shape должен совпадать.
+
+### Обновление list cache
+
+```ts
+queryClient.setQueriesData<{
+	data: SalesOrder[];
+	totalCount?: number;
+}>({ queryKey: salesOrderKeys.all }, (current) => {
+	if (!current) return current;
+
+	return {
+		...current,
+		data: current.data.map((order) =>
+			order.id === updated.id ? updated : order
+		)
+	};
+});
+```
+
+Не мутируйте `current.data` через `push`, `splice` или присваивание поля. Возвращайте новые arrays/objects.
+
+### Delete mutation
+
+```tsx
+const deleteMutation = useMutation({
+	mutationFn: (orderId: string) =>
+		odataDeleteFn<unknown>({
+			odata: SALES_ORDER_ODATA,
+			params: wrapODataParams({ OrderId: orderId })
+		})({ client: queryClient }),
+	onSuccess: async (_result, orderId) => {
+		queryClient.removeQueries({
+			queryKey: salesOrderKeys.detail(orderId),
+			exact: true
+		});
+
+		await queryClient.invalidateQueries({
+			queryKey: salesOrderKeys.all
+		});
+	}
+});
+```
+
+### FunctionImport mutation
+
+Даже если helper называется FunctionImport, cache lifecycle остаётся обычной TanStack mutation:
+
+```tsx
+const closeMutation = useMutation({
+	mutationFn: (orderId: string) =>
+		odataFunctionImportFn<CloseOrderDto, SalesOrderStatus>({
+			odata: {
+				service: "Z_SALES_ORDER_SRV",
+				target: "CloseOrder"
+			},
+			params: wrapODataParams({ OrderId: orderId }),
+			transform: mapSalesOrderStatus
+		})({ client: queryClient }),
+	onSuccess: async (_result, orderId) => {
+		await queryClient.invalidateQueries({
+			queryKey: salesOrderKeys.detail(orderId)
+		});
+	}
+});
+```
+
+### Как выбрать cache strategy
+
+| Ситуация | Strategy |
 | --- | --- |
-| Fetch | `fetchBase`, `fetchODataJson`, `fetchJson`, `fetchQueryFn`, `odataFetch`, `isNoContentResponse` |
-| Deprecated fetch factories | `fetchJsonQueryFn`, `fetchJsonMutationFn`, `fetchDeleteFn` |
-| Base URL | `BaseODataURL`, `BaseODataDp0URL`, `BaseODataUI2URL`, `BaseAppConfigURL`, `BaseUrlMap`, `BaseURLType`, `resolveODataBaseUrl`, `normalizeODataServiceName`, `getInputUrl`, `normalizeRelativePath` |
-| Request types | `RequestInitType`, `FetchErrorReportContext`, `ODataFetchOptions` |
+| Response содержит полную актуальную Entity | `setQueryData` |
+| Mutation влияет на несколько неизвестных rows | scoped `invalidateQueries` |
+| Нужен мгновенный UI и rollback возможен | optimistic update |
+| Несколько вкладок должны синхронизироваться | принятый broadcast mechanism |
+| Используется persisted descriptor | cache strategy `/persisted` |
 
-### SSO и project adapter
+Не инвалидируйте весь QueryClient:
 
-| Группа | Exports |
+```ts
+// Слишком широко.
+queryClient.invalidateQueries();
+```
+
+Используйте key owner конкретного resource.
+
+### Optimistic update с rollback
+
+```tsx
+type OrdersSnapshot = Array<[
+	readonly unknown[],
+	{
+		data: SalesOrder[];
+		totalCount?: number;
+	} | undefined
+]>;
+
+const mutation = useMutation({
+	mutationFn: (input: UpdateSalesOrderInput) =>
+		odataUpdateFn<SalesOrderDto, SalesOrder, UpdateSalesOrderBody>({
+			odata: SALES_ORDER_ODATA,
+			params: wrapODataParams({ OrderId: input.id }),
+			body: { Title: input.title },
+			transform: mapSalesOrder
+		})({ client: queryClient }),
+	onMutate: async (input) => {
+		await queryClient.cancelQueries({ queryKey: salesOrderKeys.all });
+
+		const snapshot = queryClient.getQueriesData<{
+			data: SalesOrder[];
+			totalCount?: number;
+		}>({ queryKey: salesOrderKeys.all }) as OrdersSnapshot;
+
+		queryClient.setQueriesData<{
+			data: SalesOrder[];
+			totalCount?: number;
+		}>({ queryKey: salesOrderKeys.all }, (current) => {
+			if (!current) return current;
+
+			return {
+				...current,
+				data: current.data.map((order) =>
+					order.id === input.id
+						? { ...order, title: input.title }
+						: order
+				)
+			};
+		});
+
+		return { snapshot };
+	},
+	onError: (_error, _input, context) => {
+		for (const [queryKey, data] of context?.snapshot ?? []) {
+			queryClient.setQueryData(queryKey, data);
+		}
+	},
+	onSettled: async () => {
+		await queryClient.invalidateQueries({
+			queryKey: salesOrderKeys.all
+		});
+	}
+});
+```
+
+Обязательные части optimistic flow:
+
+1. cancel связанных queries;
+2. сохранить snapshot;
+3. записать immutable optimistic state;
+4. вернуть context;
+5. rollback в `onError`;
+6. reconcile/invalidate в `onSettled`.
+
+Если rollback невозможно сделать корректно, используйте pending state mutation и server refetch вместо optimistic update.
+
+### Abort у mutation
+
+Generic TanStack `useMutation` не передаёт AbortSignal в runner автоматически. Current OData runner contract допускает optional signal, но consumer должен создать отдельный lifecycle вручную, если write endpoint безопасно поддерживает cancellation.
+
+Отмена browser request не означает, что SAP backend гарантированно отменил уже начатую write operation. Делайте write идемпотентной по backend contract, когда это возможно.
+
+### Ошибка mutation
+
+```tsx
+if (mutation.isError) {
+	showSafeErrorMessage();
+}
+```
+
+Не делайте пустой catch:
+
+```ts
+try {
+	await mutation.mutateAsync(input);
+} catch {
+	// Неверно: technical failure потерян.
+}
+```
+
+Либо позвольте global mutation error policy обработать error, либо добавьте user recovery и сохраните technical error flow.
+
+## DEV dry-run helpers
+
+Публичные helpers:
+
+```ts
+odataQueryFnDev
+odataReadFnDev
+odataCreateFnDev
+odataUpdateFnDev
+odataDeleteFnDev
+odataFunctionImportFnDev
+```
+
+Options и generics повторяют соответствующие real helpers.
+
+### Поведение в `__DEV__`
+
+```text
+metadata request ─────────────── выполняется при необходимости
+target validation ───────────── выполняется
+path/query/body building ────── выполняется
+console diagnostics ─────────── выполняется
+warning notification ────────── показывается
+целевой data/write request ──── НЕ выполняется
+transform ───────────────────── НЕ выполняется
+```
+
+Query dry-run возвращает:
+
+```ts
+{
+	data: [],
+	totalCount: 0
+}
+```
+
+Single dry-run:
+
+```ts
+{
+	data: undefined
+}
+```
+
+### Что выводится в console
+
+- helper name;
+- semantic operation;
+- service/target;
+- target kind;
+- полный URL;
+- path без base URL;
+- query string;
+- body;
+- request init;
+- итоговые transport headers preview;
+- metadata target;
+- params/options;
+- признак `autoParse` и `transform`.
+
+Не используйте real secrets/tokens в dev examples: params и body выводятся в console.
+
+### Metadata request всё ещё реален
+
+Dry-run не является полностью offline. Для построения корректного target path нужны metadata, поэтому `$metadata` может быть загружена из сети.
+
+### Production поведение
+
+В non-dev build `*Dev` helper делегирует real helper и выполняет настоящий request.
+
+Это важное правило безопасности:
+
+```text
+odataUpdateFnDev не является вечной заглушкой.
+В production он делает реальный update.
+```
+
+Не используйте Dev helper как mock API или способ гарантированно запретить write. Для теста подменяйте transport/network.
+
+### Почему нет public `odataFetchFnDev`
+
+Внутренний generic builder не экспортирован package entrypoint. Используйте только шесть specialized Dev helpers.
+
+## Metadata: описание сервиса
+
+Metadata — это XML-документ по адресу `/<service>/$metadata`. В нём сервер описывает:
+
+- какие Entity и FunctionImport существуют;
+- какие свойства есть у Entity;
+- какие свойства являются ключами;
+- типы свойств: `Edm.String`, `Edm.Boolean`, `Edm.DateTime` и другие;
+- обязательность параметров;
+- HTTP method FunctionImport;
+- связи code/text и другие SAP annotations.
+
+API-пакет загружает XML, передаёт его parser-у из `@ryuzaki13/react-foundation-lib/odata-service` и сохраняет разобранный результат в TanStack Query.
+
+```text
+GET /sap/opu/odata/sap/ZSALES_SRV/$metadata
+                 │
+                 ▼
+            XML Response
+                 │
+                 ▼
+       parseServiceMetadata(...)
+                 │
+                 ▼
+     EntityMetadata / FunctionImportMetadata
+                 │
+                 ▼
+          TanStack Query cache
+```
+
+Metadata нужна metadata-aware helpers. Именно благодаря ей `odataReadFn` понимает keys, `odataFunctionImportFn` — HTTP method, а `autoParse` — типы полей.
+
+### `fetchMetadata`
+
+`fetchMetadata(options)` создаёт TanStack-compatible query function.
+
+```ts
+import { fetchMetadata } from "@ryuzaki13/react-foundation-api/odata";
+
+const queryFn = fetchMetadata({
+  service: "ZSALES_SRV"
+});
+```
+
+Обычно напрямую вызывать функцию не нужно. Используйте `odataMetadataQueryOptions`, `getODataMetadataData` или hooks ниже.
+
+В запросе выставляются:
+
+```text
+Accept: */*
+Content-Type: application/xml
+```
+
+Если XML невозможно разобрать, ошибка оборачивается сообщением с именем сервиса. Это помогает отличить transport error от некорректной metadata.
+
+### `odataMetadataQueryOptions`
+
+Factory возвращает готовые `queryOptions`:
+
+```ts
+import { odataMetadataQueryOptions } from "@ryuzaki13/react-foundation-api/odata";
+
+const metadata = await queryClient.fetchQuery(
+  odataMetadataQueryOptions({
+    service: "ZSALES_SRV"
+  })
+);
+
+console.log(metadata.entities);
+console.log(metadata.functionImports);
+```
+
+Query key включает тип записи, service и уже resolved `baseUrl`:
+
+```ts
+[
+  "odata",
+  "metadata",
+  {
+    service: "ZSALES_SRV",
+    baseUrl: "/sap/opu/odata/sap"
+  }
+]
+```
+
+Настройки query:
+
+| Настройка | Значение | Зачем |
+| --- | --- | --- |
+| `enabled` | `Boolean(service)` | Пустое имя не запускает запрос |
+| `staleTime` | `Infinity` | Metadata не протухает по обычному таймеру |
+| `gcTime` | `Infinity` | Metadata не выгружается как обычный неактивный query |
+| `meta` | `persistedQueryMeta` | Snapshot разрешено сохранять persistence-слою |
+
+`Infinity` не означает, что metadata никогда не обновится. За её актуальностью следит отдельный version-check.
+
+### `useODataMetadataQuery`
+
+Хук одновременно наблюдает metadata и её серверную версию:
+
+```tsx
+import { useODataMetadataQuery } from "@ryuzaki13/react-foundation-api/odata";
+
+export function MetadataState() {
+  const query = useODataMetadataQuery({ service: "ZSALES_SRV" });
+
+  if (query.isPending) return <p>Загрузка metadata…</p>;
+  if (query.isError) return <p>{query.error.message}</p>;
+
+  return <p>Entity: {Object.keys(query.data.entities).length}</p>;
+}
+```
+
+Хук требует `QueryClientProvider`, потому что внутри использует `useQuery` и `useQueryClient`.
+
+### `getODataMetadataData`
+
+Императивный вариант нужен вне React component: в query function, loader, mutation или service layer.
+
+```ts
+import { getODataMetadataData } from "@ryuzaki13/react-foundation-api/odata";
+
+const metadata = await getODataMetadataData(
+  { service: "ZSALES_SRV" },
+  queryClient
+);
+
+const salesOrder = metadata?.entities.SalesOrderSet;
+```
+
+Алгоритм:
+
+1. При пустом `service` вернуть `undefined`.
+2. Получить metadata через общий QueryClient.
+3. Проверить server version, если endpoint настроен.
+4. При необходимости инвалидировать metadata только этого сервиса.
+5. Повторно получить metadata из QueryClient.
+
+Если технический version endpoint временно недоступен, ошибка version-check подавляется, а уже сохранённая metadata продолжает использоваться. Ошибка самой metadata не подавляется.
+
+### Почему нельзя делать обычный `fetch(".../$metadata")`
+
+Такой запрос обойдёт:
+
+- единый URL adapter;
+- SAP headers и cookies;
+- TanStack Query deduplication;
+- persisted snapshot;
+- version-check;
+- общий parser;
+- единый error contract.
+
+Для application code это почти всегда неправильная граница ответственности.
+
+## Metadata version-check
+
+Metadata хранится долго, поэтому пакет умеет проверять время последней генерации сервиса через project-specific technical Entity.
+
+Endpoint настраивается в adapter:
+
+```ts
+configureODataProjectAdapter({
+  metadataVersion: {
+    service: "ZTECH_SRV",
+    target: "MetadataVersions",
+    baseUrl: "default"
+  }
+});
+```
+
+Ожидаемый server record:
+
+```ts
+interface ODataMetadataVersionRecord {
+  serviceName: string;
+  lastChanged: string;
+}
+```
+
+Запрос строится примерно так:
+
+```text
+/ZTECH_SRV/MetadataVersions('ZSALES_SRV')
+```
+
+Перед подстановкой имя основного сервиса нормализуется через `normalizeODataServiceName`.
+
+### `useODataMetadataVersionQuery`
+
+Хук даёт прямой доступ к диагностике версии без загрузки metadata:
+
+```tsx
+import { useODataMetadataVersionQuery } from "@ryuzaki13/react-foundation-api/odata";
+
+function MetadataVersion() {
+  const version = useODataMetadataVersionQuery({
+    service: "ZSALES_SRV",
+    staleTime: 15 * 60 * 1000
+  });
+
+  if (!version.data?.changedAt) return null;
+  return <time>{version.data.changedAt.toISOString()}</time>;
+}
+```
+
+Result:
+
+```ts
+interface ODataMetadataVersionResult {
+  service: string;
+  changedAt: Date | null;
+  version: string | null;
+}
+```
+
+`version` — OData datetime string, построенная из `changedAt`. Если adapter endpoint отсутствует, query function возвращает успешный пустой result с `null`, не делает network request.
+
+Default `staleTime` version query — 2 часа, `gcTime` — `Infinity`. Query key также содержит application build id, чтобы разные сборки не смешивали persisted version snapshot.
+
+### `applyODataMetadataVersion`
+
+Функция сравнивает:
+
+- `version.changedAt` с сервера;
+- `dataUpdatedAt` metadata query в TanStack Query.
+
+Metadata инвалидируется только когда:
+
+```text
+metadata уже есть
+AND changedAt существует
+AND changedAt > metadata.dataUpdatedAt
+```
+
+```ts
+import {
+  applyODataMetadataVersion,
+  useODataMetadataVersionQuery
+} from "@ryuzaki13/react-foundation-api/odata";
+
+await applyODataMetadataVersion(
+  queryClient,
+  { service: "ZSALES_SRV" },
+  {
+    service: "ZSALES_SRV",
+    changedAt: new Date("2026-08-21T08:00:00Z"),
+    version: "datetime'2026-08-21T08:00:00'"
+  }
+);
+```
+
+Инвалидация точечная: metadata других сервисов и сам version query не затрагиваются. Уже идущий refetch не отменяется.
+
+## Entity metadata hooks
+
+### `useODataMetadata`
+
+Возвращает metadata конкретной Entity:
+
+```tsx
+import { useODataMetadata } from "@ryuzaki13/react-foundation-api/odata";
+
+function EntityInfo() {
+  const { metadata, metadataUpdatedAt, isLoading } = useODataMetadata({
+    service: "ZSALES_SRV",
+    target: "SalesOrderSet"
+  });
+
+  if (isLoading) return <p>Загрузка…</p>;
+
+  return (
+    <ul>
+      {metadata?.columns?.map((column) => (
+        <li key={column.id}>{column.id}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+Result:
+
+| Поле | Значение |
 | --- | --- |
-| SSO | `SsoRequiredError`, `SsoForm`, `SsoRecoveryArgs`, `SsoRequiredErrorOptions`, `isSsoForm`, `submitSsoForm`, `recoverSsoSession` |
-| Adapter | `configureODataProjectAdapter`, `getODataProjectAdapter`, `resolveODataSapClient`, `ODataProjectAdapter`, `ODataProjectTechnicalEndpoint` |
+| `metadata` | Entity metadata или `undefined` во время загрузки/если target не найден |
+| `metadataUpdatedAt` | timestamp обновления metadata query |
+| `isLoading` | идёт ли initial metadata load |
+
+Если target оказался FunctionImport, хук выбросит понятную ошибку: FunctionImport нельзя использовать как Entity. Если metadata query завершилась ошибкой, хук также выбрасывает domain-oriented error с именем сервиса.
+
+### `useODataEntity`
+
+Добавляет удобные actions над Entity metadata:
+
+```tsx
+import { useODataEntity } from "@ryuzaki13/react-foundation-api/odata";
+
+function EntityDiagnostics() {
+  const entity = useODataEntity({
+    service: "ZSALES_SRV",
+    target: "SalesOrderSet"
+  });
+
+  if (entity.isLoading) return null;
+
+  const path = entity.actions.getEntityPath({ SalesOrderId: "50000123" });
+  const columns = entity.actions.getKeys();
+  const pairs = entity.actions.getKeyPairs();
+  const pairsMap = entity.actions.getKeyPairsMap();
+
+  return <pre>{JSON.stringify({ path, columns, pairs, pairsMap }, null, 2)}</pre>;
+}
+```
+
+Actions:
+
+| Action | Что возвращает |
+| --- | --- |
+| `getEntityPath(values?)` | Metadata-correct путь Entity или parameterized Entity |
+| `getKeys()` | Массив id всех columns Entity |
+| `getKeyPairs()` | Пары `{ codeKey, textKey }` для связанных code/text columns |
+| `getKeyPairsMap()` | Словарь `{ [codeKey]: textKey }` |
+
+До окончания metadata load actions вызывать нельзя: они выбрасывают ошибку. Сначала проверяйте `isLoading`.
+
+`ODataEntity` — type alias результата хука без поля `isLoading`. Он полезен для props дочернего компонента, который получает уже готовую Entity model.
+
+## Справочники OData
+
+Справочник — небольшая или средняя Entity, которая содержит пары code/text и используется в select, filter, autocomplete или зависимых фильтрах.
+
+Пример server rows:
+
+```json
+[
+  {
+    "CompanyCode": "1000",
+    "CompanyName": "Главная компания",
+    "Plant": "1100",
+    "PlantName": "Основной завод"
+  },
+  {
+    "CompanyCode": "1000",
+    "CompanyName": "Главная компания",
+    "Plant": "1200",
+    "PlantName": "Резервный завод"
+  }
+]
+```
+
+Metadata связывает `CompanyCode` с `CompanyName`, а `Plant` с `PlantName`. Пакет строит из rows:
+
+- полный `items`;
+- пары code/text;
+- быстрый map code → text field;
+- отдельные массивы для каждого уровня;
+- chain уровней от наименьшей cardinality к наибольшей;
+- timestamp cache snapshot.
+
+### Минимальный `useODataCollectionQuery`
+
+```tsx
+import { useODataCollectionQuery } from "@ryuzaki13/react-foundation-api/odata";
+
+interface PlantItem {
+  CompanyCode: string;
+  CompanyName: string;
+  Plant: string;
+  PlantName: string;
+}
+
+function PlantSelect() {
+  const plants = useODataCollectionQuery<PlantItem>({
+    service: "ZREF_SRV",
+    target: "PlantSet"
+  });
+
+  if (plants.isPending) return <p>Загрузка…</p>;
+  if (plants.isError) return <p>Ошибка: {plants.error.message}</p>;
+
+  return (
+    <select>
+      {plants.data.separated.Plant.map((item) => (
+        <option key={item.Plant} value={item.Plant}>
+          {item.Plant} — {item.PlantName}
+        </option>
+      ))}
+    </select>
+  );
+}
+```
+
+Перед request хук загружает Entity metadata, поэтому code/text pairs не надо дублировать вручную.
+
+### `ODataCollectionConfig`
+
+```ts
+interface ODataServiceCollectionConfig {
+  service: string;
+  target: string;
+  limitedKeys?: readonly string[];
+  serverFilter?: FilterExpression<unknown>;
+}
+
+interface ODataCollectionConfig extends ODataServiceCollectionConfig {
+  excludeEmpty?: true;
+  sortByCode?: boolean;
+  hideCode?: true;
+  clientFilter?: (item: CollectionItem) => boolean;
+  swCache?: string;
+}
+```
+
+Подробно:
+
+| Поле | Default | Назначение |
+| --- | --- | --- |
+| `service` | — | Имя OData service |
+| `target` | — | Entity со справочником |
+| `limitedKeys` | все metadata columns | Ограничить `$select`; связанные text fields добавятся автоматически |
+| `serverFilter` | — | Выполнить `$filter` на сервере |
+| `excludeEmpty` | поведение lib helper | Исключение пустых codes при построении separated arrays; тип разрешает только `true` |
+| `sortByCode` | code order | `false` создаёт observer projection, отсортированную по text |
+| `hideCode` | — | UI-oriented flag; сам query его не использует |
+| `clientFilter` | — | Фильтрация уже загруженных rows до построения snapshot |
+| `swCache` | `ttl=forever;name=ref` | Политика Service Worker cache |
+
+Для config object желательно сохранять stable reference:
+
+```tsx
+const plantOData = {
+  service: "ZREF_SRV",
+  target: "PlantSet",
+  limitedKeys: ["CompanyCode", "Plant"]
+} as const;
+
+function PlantField() {
+  const query = useODataCollectionQuery(plantOData);
+  // ...
+}
+```
+
+### `limitedKeys` и linked text
+
+Допустим, вы запросили только codes:
+
+```ts
+limitedKeys: ["CompanyCode", "Plant"]
+```
+
+Metadata сообщает пары:
+
+```ts
+[
+  { codeKey: "CompanyCode", textKey: "CompanyName" },
+  { codeKey: "Plant", textKey: "PlantName" }
+]
+```
+
+Хук автоматически расширит `$select`:
+
+```text
+$select=CompanyCode,Plant,CompanyName,PlantName
+```
+
+Это защищает UI от ситуации, когда code загружен, а label отсутствует.
+
+### `serverFilter` и `clientFilter`
+
+Server filter сокращает network payload:
+
+```ts
+import { createFilterEqual } from "@ryuzaki13/react-foundation-lib/odata-service";
+
+const activePlants = useODataCollectionQuery({
+  service: "ZREF_SRV",
+  target: "PlantSet",
+  serverFilter: createFilterEqual("IsActive", true)
+});
+```
+
+Client filter выполняется после загрузки:
+
+```ts
+const localPlants = useODataCollectionQuery({
+  service: "ZREF_SRV",
+  target: "PlantSet",
+  clientFilter: (item) => item.Plant.startsWith("1")
+});
+```
+
+Критически важная разница: `serverFilter` входит в query key, а `clientFilter` — нет.
+
+Это означает, что два consumers с одинаковыми `service`, `target`, `limitedKeys`, `serverFilter`, но разными `clientFilter` используют один Query cache slot и могут записать туда разные snapshots. Не создавайте разные `clientFilter` для одной identity. Если нужны разные projections, загружайте общий snapshot и фильтруйте через TanStack `select` или component `useMemo`.
+
+`excludeEmpty` также не входит в key и влияет на cached `separated`. Consumers одной identity должны использовать одинаковое значение.
+
+### Точный query key справочника
+
+```ts
+import { createODataCollectionQueryKey } from "@ryuzaki13/react-foundation-api/odata";
+
+const key = createODataCollectionQueryKey({
+  service: "ZREF_SRV",
+  target: "PlantSet",
+  limitedKeys: ["CompanyCode", "Plant"]
+});
+```
+
+Форма key:
+
+```ts
+[
+  "odata",
+  "collection",
+  {
+    version: 2,
+    service: "ZREF_SRV",
+    target: "PlantSet",
+    limitedKeys: ["CompanyCode", "Plant"],
+    serverFilter: undefined
+  }
+]
+```
+
+Internal version отделяет snapshots разных форматов. Не собирайте key вручную.
+
+`createODataCollectionBaseQueryKey()` возвращает prefix всех collection queries:
+
+```ts
+await queryClient.invalidateQueries({
+  queryKey: createODataCollectionBaseQueryKey()
+});
+```
+
+Это широкая инвалидация всех справочников. Для одного справочника используйте точный key.
+
+### `ODataCollectionResult`
+
+```ts
+interface ODataCollectionResult<T> {
+  items: T[];
+  keyPairs: Array<{ codeKey: string; textKey: string }>;
+  keyPairsMap: Record<string, string>;
+  separated: Record<string, T[]>;
+  chain: Array<{ codeKey: string; count: number }>;
+  count: number;
+  cacheUpdatedAt: number;
+}
+```
+
+Пример:
+
+```ts
+const data = query.data;
+
+data.items;
+// Все rows после clientFilter.
+
+data.keyPairs;
+// [{ codeKey: "CompanyCode", textKey: "CompanyName" }, ...]
+
+data.keyPairsMap.Plant;
+// "PlantName"
+
+data.separated.Plant;
+// Уникальные rows уровня Plant.
+
+data.chain;
+// Уровни, отсортированные от меньшего количества уникальных codes к большему.
+
+data.count;
+// Количество rows после clientFilter.
+
+data.cacheUpdatedAt;
+// Timestamp для проверки актуальности snapshot.
+```
+
+Transport fields `ID`, `CNT`, `__metadata`, `__Parameters` удаляются из каждого item.
+
+### Ошибки загрузки справочника
+
+Низкоуровневая загрузка справочника логирует transport/parsing error и возвращает `{ items: [] }`. Поэтому `useODataCollectionQuery` может завершиться успешным пустым result вместо `isError`.
+
+Практический вывод:
+
+- пустой справочник не всегда означает, что server действительно вернул 0 rows;
+- для критичных сценариев используйте metadata-aware query helper напрямую, если ошибка должна обязательно попасть в error boundary;
+- проверяйте project logs/error reporting при неожиданно пустых данных.
+
+Это фактическое поведение текущего API, а не рекомендация скрывать ошибки.
+
+### Сортировка code/text
+
+Query cache всегда хранит канонический порядок по code. Если `sortByCode: false`, hook применяет TanStack Query `select` и возвращает observer projection по text.
+
+```tsx
+const byCode = useODataCollectionQuery({
+  service: "ZREF_SRV",
+  target: "PlantSet",
+  sortByCode: true
+});
+
+const byText = useODataCollectionQuery({
+  service: "ZREF_SRV",
+  target: "PlantSet",
+  sortByCode: false
+});
+```
+
+Оба hooks используют один network snapshot. `byText` не переписывает порядок `byCode`.
+
+### Query lifetime
+
+Collection query использует:
+
+```text
+staleTime = 2 часа
+gcTime    = 1 час после потери observers
+meta      = persistedQueryMeta
+```
+
+Snapshot может одновременно находиться:
+
+- в памяти QueryClient;
+- в persistence storage QueryClient;
+- в HTTP cache Service Worker.
+
+Это разные уровни, подробнее — в разделе о кэшах.
+
+## Актуализация справочников
+
+Для больших справочников невыгодно постоянно скачивать всё заново. Поэтому пакет поддерживает технический endpoint с Entity, изменившимися за последние 7 дней.
+
+Adapter:
+
+```ts
+configureODataProjectAdapter({
+  collectionUpdates: {
+    service: "ZTECH_SRV",
+    target: "CollectionUpdates",
+    baseUrl: "default"
+  }
+});
+```
+
+Expected record:
+
+```ts
+interface ODataCollectionUpdateRecord {
+  entityName: string;
+  lastChanged: string;
+}
+```
+
+### `useODataCollectionUpdatesQuery`
+
+```tsx
+import { useODataCollectionUpdatesQuery } from "@ryuzaki13/react-foundation-api/odata";
+
+function UpdatesDiagnostics() {
+  const query = useODataCollectionUpdatesQuery({
+    staleTime: 60 * 60 * 1000
+  });
+
+  return <pre>{JSON.stringify(query.data, null, 2)}</pre>;
+}
+```
+
+Result:
+
+```ts
+interface ODataCollectionUpdatesResult {
+  items: ODataCollectionUpdateItem[];
+  byEntityName: Record<string, ODataCollectionUpdateItem>;
+  fetchedAt: number;
+  coverageStartedAt: number;
+}
+
+interface ODataCollectionUpdateItem {
+  entityName: string;
+  lastChanged: string;
+  lastChangedAt: Date | null;
+}
+```
+
+`coverageStartedAt = fetchedAt - 7 дней`.
+
+Если endpoint не настроен, query остаётся активным, но возвращает успешный пустой result без network request. Collection hooks ждут завершения updates query перед своим request.
+
+Default:
+
+| Параметр | Значение |
+| --- | --- |
+| updates `staleTime` | 4 часа |
+| updates `gcTime` | `Infinity` |
+| updates SW policy | `ttl=4h;name=ref-updates` |
+| updates persistence | включена через `persistedQueryMeta` |
+
+Query key содержит build id. Используйте `createODataCollectionUpdatesQueryKey()`, не собирайте его вручную.
+
+### `shouldRefreshODataCollectionCache`
+
+Helper отвечает только на вопрос «нужен ли свежий snapshot?».
+
+```ts
+import { shouldRefreshODataCollectionCache } from "@ryuzaki13/react-foundation-api/odata";
+
+const shouldRefresh = shouldRefreshODataCollectionCache(
+  {
+    update: {
+      entityName: "PlantSet",
+      lastChanged: "20260821090000",
+      lastChangedAt: new Date("2026-08-21T09:00:00Z")
+    },
+    metadataUpdatedAt: Date.now(),
+    updatesCoverageStartedAt: Date.now() - 7 * 24 * 60 * 60 * 1000
+  },
+  cachedCollection
+);
+```
+
+Возвращает `true`, если выполняется хотя бы одно:
+
+- в updates есть usable `lastChangedAt`, а cache отсутствует или старее;
+- metadata обновлена позже cache;
+- cache отсутствует;
+- cache старше окна, которое покрывает updates endpoint.
+
+Последнее правило принципиально: если endpoint сообщает только изменения за 7 дней, отсутствие Entity в ответе ничего не доказывает для cache возрастом больше недели.
+
+Некорректные timestamps (`NaN`, `Infinity`, `0`, отрицательные) игнорируются.
+
+### `resolveODataCollectionSwCachePolicy`
+
+Если snapshot нужно обновить, helper превращает обычную TTL policy в bust policy:
+
+```ts
+resolveODataCollectionSwCachePolicy("ttl=24h;name=ref", true);
+// "bust=24h;name=ref"
+
+resolveODataCollectionSwCachePolicy("ttl=forever;name=ref", true);
+// "bust=forever;name=ref"
+
+resolveODataCollectionSwCachePolicy("off", true);
+// "off"
+
+resolveODataCollectionSwCachePolicy("bust=1h;name=ref", true);
+// уже bust, строка не меняется
+
+resolveODataCollectionSwCachePolicy("custom-policy", true);
+// "bust=forever;name=ref"
+```
+
+При `shouldBust === false` исходная строка возвращается без изменений.
+
+### Public constants
+
+```ts
+ODATA_COLLECTION_UPDATES_LOOKBACK_MS;
+// 7 дней в миллисекундах
+
+ODATA_COLLECTION_DEFAULT_SW_CACHE;
+// "ttl=forever;name=ref"
+
+ODATA_COLLECTION_BUST_SW_CACHE;
+// "bust=forever;name=ref"
+
+ODATA_COLLECTION_UPDATES_SW_CACHE;
+// "ttl=4h;name=ref-updates"
+```
+
+Не копируйте строковые значения в application code, если нужен именно package default.
+
+## UI model справочника
+
+`useODataCollectionQuery` отвечает за server snapshot. `useODataCollection` добавляет локальные операции для select/listbox/virtualized UI.
+
+### `ODataCollectionModel`
+
+```ts
+interface ODataCollectionModel {
+  codeKey: string;
+  minSearchTextLength?: number;
+  minSearchCodeLength?: number;
+  searchDebounceDelay?: number;
+  maxVisibleItems?: number;
+}
+```
+
+### `useODataCollectionModel`
+
+Подставляет defaults из общего collection store и фиксирует model на весь lifecycle component:
+
+```tsx
+import { useODataCollectionModel } from "@ryuzaki13/react-foundation-api/odata";
+
+const model = useODataCollectionModel({
+  codeKey: "Plant",
+  maxVisibleItems: 100,
+  minSearchCodeLength: 1,
+  minSearchTextLength: 2,
+  searchDebounceDelay: 250
+});
+```
+
+Последующие изменения переданного object не пересоздают stable model. Рассматривайте вход как initial config, а не reactive props.
+
+### `useODataCollection`
+
+```tsx
+import {
+  useODataCollection,
+  useODataCollectionModel
+} from "@ryuzaki13/react-foundation-api/odata";
+
+function PlantList() {
+  const model = useODataCollectionModel({
+    codeKey: "Plant",
+    maxVisibleItems: 50
+  });
+
+  const collection = useODataCollection({
+    odata: {
+      service: "ZREF_SRV",
+      target: "PlantSet"
+    },
+    model,
+    pageSize: 25
+  });
+
+  const visible = collection.getItems(
+    (code, text) => code.startsWith("1") || text.toLowerCase().includes("завод")
+  );
+
+  return (
+    <ul>
+      {visible.map((item) => (
+        <li key={item.Plant}>{item.PlantName}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+Result API:
+
+| Поле/action | Назначение |
+| --- | --- |
+| `data` | Raw `ODataCollectionResult` |
+| `isLoading`, `isError` | Query state |
+| `codeKey` | Активное code field из model |
+| `textKey` | Linked text field из metadata |
+| `getItems(predicate?, selected?)` | Получить не более `maxVisibleItems`, учесть dependencies и выбранные rows |
+| `findSourceItemsByKeys(field, keys)` | Найти rows полного `items` по значениям произвольного field |
+| `setFilteredItems(items?)` | Ограничить активный code level набором dependency rows |
+| `getPage(pageIndex)` | Slice по `pageSize` для virtualization |
+| `buildSearchIndex(field)` | Построить prefix index длиной от 1 до 5 symbols |
+| `debounce(key, fn, delay?)` | Независимый timer по string key |
+| `itemsMap` | Map active code → row |
+| `separatedItems` | Rows active code level |
+| `orderedKeys` | Codes в текущем порядке |
+| `totalCount` | Размер active separated level |
+| `pageSize` | Фактический размер page |
+
+`getItems` исключает rows, уже переданные в `currentSelectedKeys`, применяет dependencies, затем predicate и останавливается на лимите.
+
+`setFilteredItems(undefined)` или пустой массив снимает dependency filter.
+
+`buildSearchIndex` индексирует lowercase prefixes максимум до 5 symbols. Для поиска по более длинной строке используйте первые 5 symbols для получения candidates, затем точный predicate.
+
+Поле `filter` во входных props в текущей реализации не используется. Не полагайтесь на него; фильтруйте через `odata.clientFilter`, `getItems(predicate)` или собственную projection.
+
+`refetch` и `invalidate` в result помечены deprecated. Для явного управления используйте `QueryClient` и public key factory.
+
+## Chains зависимых справочников
+
+`chain` помогает расположить связанные filters от самого узкого уровня к самому широкому. Например:
+
+```ts
+[
+  { codeKey: "CompanyCode", count: 3 },
+  { codeKey: "Plant", count: 24 },
+  { codeKey: "StorageLocation", count: 180 }
+]
+```
+
+### `useODataCollectionChains`
+
+Хук читает chains нескольких collection snapshots и подписывается на изменения Query cache:
+
+```tsx
+import { useODataCollectionChains } from "@ryuzaki13/react-foundation-api/odata";
+
+const services = [
+  { service: "ZREF_SRV", target: "PlantSet" },
+  { service: "ZREF_SRV", target: "MaterialSet" }
+] as const;
+
+function ChainsView() {
+  const chains = useODataCollectionChains([...services]);
+
+  return <pre>{JSON.stringify(chains, null, 2)}</pre>;
+}
+```
+
+Map key имеет форму `service.target`:
+
+```ts
+{
+  "ZREF_SRV.PlantSet": [
+    { codeKey: "CompanyCode", count: 3 },
+    { codeKey: "Plant", count: 24 }
+  ]
+}
+```
+
+Хук не загружает справочники сам. Он наблюдает только snapshots, которые уже появились в QueryClient.
+
+## Зависимые OData segments
+
+Segment описывает один level сложного справочника.
+
+```ts
+interface ODataCollectionSegment {
+  placeholder: string;
+  hideCode?: true;
+  selectText?: true;
+}
+
+interface ODataDependentSegment extends ODataCollectionSegment {
+  panelVisibility?: "user" | "always" | "none";
+}
+```
+
+Значения `panelVisibility`:
+
+| Значение | Смысл |
+| --- | --- |
+| `user` | Видимость определяется пользовательским вариантом; default |
+| `always` | Segment всегда показывается в общей filter panel |
+| `none` | Segment не показывается в panel |
+
+`selectText: true` означает, что selected value должен быть text, а не code. Это контракт для UI consumer; сам transport ничего не меняет.
+
+### `flattenODataDependentServices`
+
+На входе services сгруппированы:
+
+```ts
+const dependentServices = [
+  {
+    odata: {
+      service: "ZREF_SRV",
+      target: "PlantSet"
+    },
+    segments: {
+      CompanyCode: {
+        placeholder: "Компания",
+        panelVisibility: "always"
+      },
+      Plant: {
+        placeholder: "Завод"
+      }
+    },
+    model: {
+      maxVisibleItems: 100
+    }
+  }
+] as const;
+```
+
+Функция делает flat segment list:
+
+```ts
+import { flattenODataDependentServices } from "@ryuzaki13/react-foundation-api/odata";
+
+const segments = flattenODataDependentServices(dependentServices);
+```
+
+Каждый `ODataDependentSegmentItem` содержит:
+
+```ts
+interface ODataDependentSegmentItem {
+  id: string;
+  serviceKey: string;
+  serviceIndex: number;
+  segmentIndex: number;
+  odata: ODataCollectionConfig;
+  segment: ODataDependentSegment;
+  model: ODataCollectionModel;
+  panelVisibility: ControlPanelVisibility;
+}
+```
+
+`model.codeKey` автоматически равен id segment. `serviceKey` строится как `service.target`. Индексы сохраняют исходный стабильный порядок.
+
+### `sortODataDependentSegmentItemsByChains`
+
+```ts
+import { sortODataDependentSegmentItemsByChains } from "@ryuzaki13/react-foundation-api/odata";
+
+const ordered = sortODataDependentSegmentItemsByChains(
+  segments,
+  {
+    "ZREF_SRV.PlantSet": [
+      { codeKey: "CompanyCode", count: 3 },
+      { codeKey: "Plant", count: 24 }
+    ]
+  },
+  ["Plant"]
+);
+```
+
+Порядок без override:
+
+1. Исходный порядок services.
+2. Внутри service — chain order для известных ids.
+3. Segment, присутствующие в chain, идут раньше неизвестных.
+4. Неизвестные сохраняют исходный `segmentIndex`.
+5. Полная стабильность обеспечивается исходным flat index.
+
+`orderOverrideIds` поднимает указанные ids в заданном порядке. Дубликаты удаляются, неизвестные ids игнорируются, остальные segments сохраняют base order.
+
+`sortODataDependentServicesByChains` оставлен как deprecated API старой service-level модели. Для нового кода сначала flatten, затем сортируйте segment items.
+
+## OData metadata → Table columns
+
+`useODataTableColumns` связывает metadata с helpers модуля `@ryuzaki13/react-foundation-lib/table`. Есть два режима.
+
+### Режим `build`
+
+Генерирует columns только по metadata:
+
+```tsx
+import { useODataTableColumns } from "@ryuzaki13/react-foundation-api/odata";
+
+interface SalesOrderRow {
+  SalesOrderId: string;
+  NetAmount: number;
+  CreatedAt: Date;
+}
+
+function SalesOrderTable() {
+  const { columns, defaultColumnVisibility, isLoading } =
+    useODataTableColumns<SalesOrderRow>({
+      mode: "build",
+      service: "ZSALES_SRV",
+      target: "SalesOrderSet",
+      resolveHeader: (column) =>
+        column.id === "SalesOrderId" ? "Заказ" : column.label ?? column.id,
+      resolveVisible: (column) => column.id !== "InternalStatus",
+      resolveFormatting: (column) => {
+        if (column.id === "NetAmount") {
+          return { role: "number" };
+        }
+
+        return undefined;
+      }
+    });
+
+  if (isLoading) return <p>Подготовка columns…</p>;
+
+  return (
+    <Table
+      columns={columns}
+      initialState={{ columnVisibility: defaultColumnVisibility }}
+    />
+  );
+}
+```
+
+Callback purposes:
+
+| Callback | Назначение |
+| --- | --- |
+| `resolveHeader(column)` | Переопределить header generated column |
+| `resolveVisible(column)` | Сформировать initial visibility |
+| `resolveFormatting(column)` | Добавить typed formatting metadata |
+
+### Режим `enrich`
+
+Сохраняет ваши columns, но дополняет их OData formatting context:
+
+```tsx
+const baseColumns = [
+  {
+    accessorKey: "SalesOrderId",
+    header: "Заказ"
+  },
+  {
+    accessorKey: "NetAmount",
+    header: "Сумма"
+  }
+] as const;
+
+const table = useODataTableColumns<SalesOrderRow>({
+  mode: "enrich",
+  service: "ZSALES_SRV",
+  target: "SalesOrderSet",
+  columns: baseColumns
+});
+```
+
+В режиме `enrich` initial visibility возвращается только для leaf columns, которые удалось сопоставить с metadata по stable column id. Group columns обходятся рекурсивно.
+
+### Result
+
+```ts
+interface UseODataTableColumnsResult<TData extends object> {
+  columns: TableColumnDef<TData>[];
+  defaultColumnVisibility: Record<string, boolean> | undefined;
+  metadata: EntityMetadata | undefined;
+  isLoading: boolean;
+}
+```
+
+До загрузки metadata:
+
+- `build` возвращает пустой `columns`;
+- `enrich` возвращает shallow copy входных columns;
+- `defaultColumnVisibility` равен `undefined`;
+- `metadata` равна `undefined`.
+
+Не сохраняйте `defaultColumnVisibility` обратно в metadata. Это стартовое состояние TanStack Table, которое пользователь затем может менять отдельно.
+
+## Автоматическое восстановление SSO
+
+SAP Gateway иногда вместо OData JSON возвращает redirect или HTML-форму ADFS/SSO. Если обычный JSON parser попытается разобрать такой ответ, разработчик увидит непонятную ошибку вида «Unexpected token `<`». Transport распознаёт этот сценарий и пытается восстановить session.
+
+### Как распознаётся SSO
+
+Есть два основных сигнала:
+
+1. При `redirect: "manual"` browser возвращает response с `type === "opaqueredirect"`.
+2. Response body выглядит как HTML и содержит form с input `SAMLRequest` или `SAMLResponse`.
+
+Не любая HTML-форма считается SSO. Проверка намеренно узкая:
+
+```ts
+import { isSsoForm } from "@ryuzaki13/react-foundation-api/odata";
+
+isSsoForm({
+  action: "/adfs/ls/",
+  method: "POST",
+  inputs: { SAMLRequest: "..." }
+});
+// true
+
+isSsoForm({
+  action: "/login",
+  method: "POST",
+  inputs: { username: "" }
+});
+// false
+```
+
+### `SsoForm`
+
+```ts
+type SsoForm = {
+  action: string;
+  method: string;
+  inputs: Record<string, string>;
+};
+```
+
+`inputs` могут содержать чувствительные одноразовые SAML values. Не выводите весь object в console и не добавляйте его в analytics/error report.
+
+### `SsoRequiredError`
+
+```ts
+import { SsoRequiredError } from "@ryuzaki13/react-foundation-api/odata";
+
+try {
+  await fetchODataJson("/ZSALES_SRV/SalesOrderSet");
+} catch (error) {
+  if (error instanceof SsoRequiredError) {
+    console.error(error.message, {
+      recoverable: error.recoverable,
+      hasForm: Boolean(error.form),
+      hasRecoveryUrl: Boolean(error.recoveryUrl)
+    });
+  }
+}
+```
+
+Instance fields:
+
+| Поле | Смысл |
+| --- | --- |
+| `message` | Человекочитаемая причина |
+| `form` | Извлечённая SAML form, если была в HTML |
+| `recoveryUrl` | URL для iframe navigation, если был redirect |
+| `recoverable` | Можно ли transport-у повторить automatic recovery |
+
+Default `recoverable` равен `true`.
+
+### Automatic recovery lifecycle
+
+```text
+OData request
+    │
+    ├─ normal JSON ───────────────────────────────► success
+    │
+    └─ redirect / SAML form
+             │
+             ▼
+      hidden iframe recovery
+             │
+             ▼
+        retry request once
+             │
+             ├─ success ─────────────────────────► success
+             │
+             └─ SSO снова требуется
+                       │
+                       ▼
+             unrecoverable SsoRequiredError
+```
+
+Transport использует глобальный gate:
+
+- несколько одновременных SAP requests не создают несколько recovery iframes;
+- первый request запускает recovery;
+- остальные ждут тот же promise;
+- после успешного gate каждый request повторяется;
+- если recovery или retry снова потребовал SSO, transport блокирует последующие SAP requests unrecoverable error до reload страницы.
+
+Такое блокирование защищает от бесконечного цикла redirect → iframe → retry.
+
+`ssoRetried` в `RequestInitType` — внутренняя метка одного retry. Не выставляйте её в application code.
+
+### Что означает завершение iframe
+
+Recovery promise завершается после `load` или `error` iframe и короткой settle delay. Само событие iframe ещё не доказывает, что authentication успешна. Истинная проверка — повторный OData request.
+
+### `recoverSsoSession`
+
+Обычно вызывается автоматически. Public function полезна для диагностического или controlled flow:
+
+```ts
+import { recoverSsoSession } from "@ryuzaki13/react-foundation-api/odata";
+
+const recovered = await recoverSsoSession({
+  recoveryUrl: "/sap/opu/odata/sap/ZSALES_SRV/"
+});
+
+if (!recovered) {
+  // Среда без window/document либо recovery target отсутствует.
+}
+```
+
+Или с form:
+
+```ts
+const recovered = await recoverSsoSession({
+  form: {
+    action: "/adfs/ls/",
+    method: "POST",
+    inputs: {
+      SAMLRequest: samlRequest
+    }
+  }
+});
+```
+
+Одновременные ручные вызовы также переиспользуют один promise.
+
+В SSR/Node без `window` функция возвращает `false`. Основной runtime модуля — browser SPA.
+
+### `submitSsoForm`
+
+Низкоуровневая imperative function создаёт hidden iframe и form, монтирует их в document и вызывает `form.submit()`:
+
+```ts
+import { submitSsoForm } from "@ryuzaki13/react-foundation-api/odata";
+
+const submitted = submitSsoForm(ssoForm);
+
+if (!submitted) {
+  // Нет document/body либо form не является SAML form.
+}
+```
+
+Это явный browser side effect. Для обычного OData request не вызывайте её — automatic recovery уже встроено в `fetchBase`/`fetchODataJson`.
+
+## CSRF для SAP write operations
+
+SAP Gateway требует CSRF token для изменяющих requests. Transport управляет token автоматически.
+
+Write определяется как любой method, кроме `GET` и `HEAD`. Следовательно, token запрашивается для `POST`, `PUT`, `PATCH`, `DELETE` и других custom write methods, если request распознан как SAP.
+
+### Полный lifecycle
+
+```text
+POST /ZSALES_SRV/SalesOrderSet
+        │
+        ▼
+CSRF token уже есть в memory cache?
+        │
+   ┌────┴────┐
+  да        нет
+   │          │
+   │          ▼
+   │   GET /ZSALES_SRV/
+   │   x-csrf-token: Fetch
+   │          │
+   │          ▼
+   │      сохранить token
+   └────┬─────┘
+        ▼
+write request + x-csrf-token
+        │
+        ├─ 2xx ───────────────────────────────► success
+        │
+        └─ 401/403
+             │
+             ▼
+       удалить cached token
+             │
+             ▼
+       запросить новый token
+             │
+             ▼
+          retry once
+```
+
+### Token scope
+
+Для обычного OData scope включает:
+
+```text
+baseUrlType + sapClient + serviceName
+```
+
+Например:
+
+```text
+odata:100:ZSALES_SRV
+```
+
+Это не позволяет случайно использовать token одного сервиса/mandant для другого.
+
+Для `baseUrl: "config"` scope строится из application id и SAP client, а token загружается с `/Statistics`.
+
+### Deduplication
+
+Пакет хранит отдельно:
+
+- готовые tokens;
+- promises уже идущих token requests.
+
+Если пять mutations стартовали одновременно без token, network получит один token request, а остальные дождутся его результата.
+
+### Headers token request
+
+```text
+x-csrf-token: Fetch
+sap-language: ru
+sap-contextid-accept: header
+Accept-Language: ru
+sap-client: <client>, если определён
+```
+
+Credentials всегда `include`, redirect для SAP — `manual`.
+
+### Что должен делать application code
+
+Ничего из следующего делать не надо:
+
+```ts
+// Не нужно и не следует:
+let csrfToken: string;
+localStorage.setItem("csrf", csrfToken);
+headers.set("x-csrf-token", csrfToken);
+```
+
+Достаточно использовать metadata-aware mutation helper или `fetchBase` с write method. Token живёт только во внутреннем memory cache и не сохраняется в localStorage/IndexedDB.
+
+## Четыре разных уровня кэширования
+
+В OData-сценарии слово «кэш» может означать разные механизмы. Их нельзя смешивать.
+
+| Уровень | Что хранит | Identity | Кто управляет |
+| --- | --- | --- | --- |
+| TanStack Query memory cache | Parsed backend snapshot и query state | `queryKey` | QueryClient/application |
+| Query persistence | Разрешённые snapshots между reload | Тот же `queryKey` + persister policy | `query-client` package |
+| Cross-tab broadcast | События/синхронизация между tabs | Query contract | `query-client` package |
+| Service Worker runtime cache | HTTP Response | URL + SW policy | Service Worker |
+
+Browser HTTP cache может существовать дополнительно, но модуль не использует его как application state.
+
+### TanStack Query cache
+
+Это главный владелец server snapshots в React application:
+
+```ts
+const queryKey = ["sales-orders", { companyId }] as const;
+
+const data = queryClient.getQueryData(queryKey);
+await queryClient.invalidateQueries({ queryKey });
+```
+
+Правила:
+
+- все inputs, меняющие server result, должны входить в key;
+- query data — backend snapshot, не mutable form draft;
+- не мутируйте object/array на месте;
+- mutation должна явно invalidировать или обновить затронутые keys.
+
+### Query persistence
+
+`persistedQueryMeta` разрешает инфраструктуре QueryClient сохранять query. Metadata, справочники и список их обновлений используют этот marker.
+
+Persistence не означает вечную актуальность. После восстановления snapshot проверяется version/updates logic.
+
+Не сохраняйте auth tokens и SAML payload в query data.
+
+### Cross-tab broadcast
+
+Если project QueryClient настроен на broadcast, изменения cache могут синхронизироваться между вкладками. Сам `odata` module не создаёт broadcast channel. Он только соблюдает stable query contracts.
+
+### Service Worker cache и `x-sw-cache`
+
+OData transport только выставляет header:
+
+```text
+x-sw-cache: ttl=24h;max=100;name=ui
+```
+
+Интерпретация header принадлежит Service Worker policy проекта. Если Service Worker не установлен или не понимает policy, header сам по себе ничего не кэширует.
+
+Примеры:
+
+| Policy | Намерение |
+| --- | --- |
+| `off` | Network-only |
+| `ttl=10m` | Cache с TTL 10 минут |
+| `ttl=24h;max=200;name=ui` | Именованный cache с TTL и лимитом |
+| `ttl=forever;name=ref` | Долгоживущий reference cache |
+| `bust=24h;name=ref` | Принудительно обновить запись из network |
+
+Для auth-sensitive или user-specific responses безопасный default — `off`, если Service Worker policy не доказывает корректное разделение users/sessions. Не применяйте broad shared caching только ради скорости.
+
+### `swCache` в разных APIs
+
+У metadata-aware helper есть два места, но итог один:
+
+```ts
+odataQueryFn({
+  odata,
+  options: {
+    top: 100
+  },
+  swCache: "ttl=5m;name=sales"
+});
+```
+
+У low-level `odataFetch` policy находится внутри options:
+
+```ts
+odataFetch("/ZSALES_SRV/SalesOrderSet", {
+  top: 100,
+  swCache: "ttl=5m;name=sales"
+});
+```
+
+У `fetchQueryFn` — рядом с `init` и `transform`.
+
+## Обработка ошибок
+
+### HTTP JSON error
+
+Transport пытается собрать полезное сообщение из OData/JSON payload в таком порядке:
+
+- строковый `error`;
+- `error.code`;
+- `error.message.value` или `error.message`;
+- top-level `details`;
+- top-level `message`.
+
+Повторы удаляются, части соединяются через ` | `.
+
+Пример response:
+
+```json
+{
+  "error": {
+    "code": "ZSALES/001",
+    "message": {
+      "value": "Заказ заблокирован"
+    }
+  }
+}
+```
+
+Error message:
+
+```text
+ZSALES/001 | Заказ заблокирован
+```
+
+Если подходящего поля нет, fallback:
+
+```text
+HTTP error: 500 Internal Server Error
+```
+
+### Plain text error
+
+Для не-JSON response непустой text становится `Error.message`. Поэтому UI не должен слепо рендерить HTML через `dangerouslySetInnerHTML`; transport возвращает обычную строку.
+
+### Network/CORS
+
+Для response status `0` формируется сообщение:
+
+```text
+Ошибка сети или CORS. Проверьте подключение и настройки сервера.
+```
+
+Browser может выбросить `TypeError` до создания Response. Такой error пробрасывается как есть.
+
+### Unexpected HTML
+
+Если HTML не содержит SAML form, transport:
+
+1. Создаёт `Error("Unexpected HTML response from OData endpoint")`.
+2. Передаёт безопасный summary в error-report infrastructure.
+3. Выбрасывает error consumer-у.
+
+В report попадает:
+
+- request/response URL без query string;
+- method, base URL type, SAP client;
+- status и status text;
+- content type, redirect flag, response type;
+- длина HTML;
+- title не длиннее 200 symbols;
+- количество forms;
+- до 40 уникальных input names;
+- text preview не длиннее 1000 symbols.
+
+В report не передаются:
+
+- полный raw HTML;
+- query string URL;
+- значения hidden inputs;
+- SAMLRequest/SAMLResponse values.
+
+Это снижает риск утечки credentials/tokens в diagnostic channel.
+
+### Unsupported body
+
+Если Content-Type не JSON, body не HTML и `JSON.parse(text)` не удался:
+
+```text
+Unsupported response content type and body is not JSON
+```
+
+### Ошибка metadata-aware validation
+
+До network request helper может сообщить:
+
+- target не найден;
+- Entity использована как FunctionImport или наоборот;
+- operation несовместима с target;
+- FunctionImport не содержит HTTP method;
+- отсутствуют обязательные params;
+- plain read пытается использовать parameterized Entity;
+- body имеет неправильную форму.
+
+Такая ошибка обычно означает проблему application contract, а не временный network failure. Не запускайте бессмысленные automatic retries для неё.
+
+### Error handling в React
+
+```tsx
+function SalesOrders() {
+  const query = useQuery(salesOrdersQueryOptions({ companyId: "1000" }));
+
+  if (query.isPending) return <Spinner />;
+
+  if (query.isError) {
+    return (
+      <ErrorPanel
+        title="Не удалось загрузить заказы"
+        description={query.error.message}
+        onRetry={() => query.refetch()}
+      />
+    );
+  }
+
+  return <SalesOrderTable rows={query.data} />;
+}
+```
+
+Для mutation показывайте feedback на уровне пользовательского действия и не очищайте draft при ошибке.
+
+## Abort и concurrency
+
+### Query cancellation
+
+TanStack Query передаёт `signal` в query function. Передайте его metadata-aware runner:
+
+```ts
+queryFn: ({ signal, client }) =>
+  odataQueryFn<RawRow>({ odata })({ client, signal })
+```
+
+Если request отменён, browser fetch завершится AbortError. Это не обязательно application error; TanStack Query умеет корректно учитывать cancellation.
+
+### Caller-provided signal
+
+`fetchQueryFn` добавляет query signal только когда `init.signal` не задан. Явный caller signal имеет приоритет.
+
+Каждый запуск получает новый clone `init`, поэтому отменённый signal предыдущего refetch не «заражает» следующий.
+
+### Mutation cancellation
+
+`useMutation` не передаёт AbortSignal автоматически как query. Если сценарий требует cancel, создайте `AbortController` на уровне feature и передайте `controller.signal` runner-у.
+
+Не переиспользуйте один уже aborted controller для следующей mutation.
+
+## Security checklist
+
+- Используйте только public import `@ryuzaki13/react-foundation-api/odata`.
+- Не сохраняйте CSRF/SAML values в localStorage, query cache или logs.
+- Не вставляйте server HTML в DOM.
+- Не передавайте user input в raw OData URL; стройте filters/params через typed helpers lib-пакета.
+- Не считайте TypeScript generic runtime validation.
+- Не включайте SW cache для user-specific данных без явной cache policy.
+- Не собирайте metadata/function path строковой конкатенацией.
+- Не отключайте `credentials: "include"` для SAP request: transport управляет cookies централизованно.
+- Не отправляйте mutation через GET только ради обхода CSRF; HTTP method определяется service metadata/operation contract.
+- Не выводите `body` и params с secrets при использовании Dev helpers.
+
+## Deprecated API
+
+Следующие helpers остаются public, но новый код на них строить не следует:
+
+| API | Почему | Замена |
+| --- | --- | --- |
+| `fetchJsonQueryFn` | Не использует metadata-aware target contract | `odataQueryFn` или `fetchQueryFn` для не-OData response |
+| `fetchJsonMutationFn` | Raw URL и слабый operation contract | `odataCreateFn`, `odataUpdateFn`, `odataFunctionImportFn` |
+| `fetchDeleteFn` | Raw URL, не валидирует Entity keys | `odataDeleteFn` |
+| `sortODataDependentServicesByChains` | Старая service-level сортировка | `flattenODataDependentServices` + `sortODataDependentSegmentItemsByChains` |
+| `useODataCollection(...).refetch` | Imperative method старой UI model | `QueryClient` + key factory |
+| `useODataCollection(...).invalidate` | Imperative method старой UI model | `QueryClient.invalidateQueries` |
+
+Deprecated не означает «сломано сегодня». Это означает, что API может быть удалён и не должен распространяться на новые modules.
+
+### Legacy examples только для миграции
+
+```ts
+// Было
+const load = fetchJsonQueryFn<RawOrder[]>(
+  "/ZSALES_SRV/SalesOrderSet"
+);
+
+// Стало
+const load = odataQueryFn<RawOrder>({
+  odata: {
+    service: "ZSALES_SRV",
+    target: "SalesOrderSet"
+  }
+});
+```
+
+```ts
+// Было
+const remove = fetchDeleteFn(
+  "/ZSALES_SRV/SalesOrderSet('50000123')"
+);
+
+// Стало
+const remove = odataDeleteFn({
+  odata: {
+    service: "ZSALES_SRV",
+    target: "SalesOrderSet"
+  },
+  params: wrapODataParams({
+    SalesOrderId: "50000123"
+  })
+});
+```
+
+## Тестирование
+
+### Что тестировать в application module
+
+Не нужно повторно тестировать всю foundation implementation. Проверяйте свой contract:
+
+- правильные service/target;
+- query key включает все identity inputs;
+- params правильно собраны из feature inputs;
+- transform создаёт ожидаемую domain model;
+- mutation обновляет/инвалидирует нужные cache keys;
+- UI различает loading, empty и error;
+- `enabled` запрещает неполный request.
+
+### Unit test mapper
+
+Mapper проще и надёжнее тестировать отдельно от network:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+describe("mapSalesOrder", () => {
+  it("создаёт domain model из raw OData row", () => {
+    expect(
+      mapSalesOrder({
+        SalesOrderId: "50000123",
+        NetAmount: "1250.50",
+        CreatedAt: "/Date(1787280000000)/",
+        IsBlocked: "X"
+      })
+    ).toEqual({
+      id: "50000123",
+      amount: 1250.5,
+      createdAt: new Date(1787280000000),
+      blocked: true
+    });
+  });
+});
+```
+
+Если mapping рассчитан на `autoParse: true`, test input должен соответствовать уже parsed runtime values.
+
+### Unit test query options
+
+```ts
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it, vi } from "vitest";
+
+describe("salesOrdersQueryOptions", () => {
+  it("включает companyId в identity", () => {
+    const first = salesOrdersQueryOptions({ companyId: "1000" });
+    const second = salesOrdersQueryOptions({ companyId: "2000" });
+
+    expect(first.queryKey).not.toEqual(second.queryKey);
+  });
+
+  it("не запускается без обязательного input", () => {
+    const options = salesOrdersQueryOptions({ companyId: "" });
+    expect(options.enabled).toBe(false);
+  });
+});
+```
+
+### Transport test без metadata
+
+Для low-level transport можно подменить `fetch`:
+
+```ts
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fetchODataJson } from "@ryuzaki13/react-foundation-api/odata";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("orders transport", () => {
+  it("разворачивает OData V2 collection envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            d: {
+              results: [
+                {
+                  __metadata: { uri: "..." },
+                  SalesOrderId: "50000123"
+                }
+              ],
+              __count: "1"
+            }
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          }
+        )
+      )
+    );
+
+    const result = await fetchODataJson<
+      Array<{ SalesOrderId: string }>
+    >("/ZSALES_SRV/SalesOrderSet");
+
+    expect(result).toEqual({
+      data: [{ SalesOrderId: "50000123" }],
+      totalCount: 1
+    });
+  });
+});
+```
+
+В project test environment учтите compile-time constants package (`__DEV__`, `__SAP_CLIENT__` и другие), которые обычно подставляет build config.
+
+### Mutation cache test
+
+```ts
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it, vi } from "vitest";
+
+it("после create инвалидирует список", async () => {
+  const queryClient = new QueryClient();
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+  const listKey = ["sales-orders", "list", { companyId: "1000" }] as const;
+
+  // В integration test здесь вызывается mutation success handler.
+  await queryClient.invalidateQueries({ queryKey: listKey });
+
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: listKey });
+});
+```
+
+### SSO/CSRF tests
+
+В application tests обычно достаточно проверить пользовательский fallback. Детальный transport contract уже тестируется в package. Если всё же нужен integration test:
+
+- мокайте redirect/HTML form и subsequent retry;
+- никогда не используйте real SAML payload;
+- проверяйте, что concurrent writes не создают несколько token requests;
+- проверяйте один retry после 401/403;
+- очищайте DOM и global mocks после test.
+
+## Полный public API
+
+Ниже перечислены exports package subpath. Это карта поиска; подробное поведение основных функций описано выше.
 
 ### Metadata-aware operations
 
-| Группа | Exports |
+| Export | Назначение |
 | --- | --- |
-| Real | `odataQueryFn`, `odataReadFn`, `odataCreateFn`, `odataUpdateFn`, `odataDeleteFn`, `odataFunctionImportFn` |
-| DEV dry-run | `odataQueryFnDev`, `odataReadFnDev`, `odataCreateFnDev`, `odataUpdateFnDev`, `odataDeleteFnDev`, `odataFunctionImportFnDev` |
-| Public request type | `ODataFetchFnRequest` |
+| `odataQueryFn` | GET collection/plain или parameterized Entity |
+| `odataReadFn` | GET одной Entity по keys |
+| `odataCreateFn` | POST новой Entity |
+| `odataUpdateFn` | PUT Entity по keys |
+| `odataDeleteFn` | DELETE Entity по keys |
+| `odataFunctionImportFn` | FunctionImport с method из metadata |
+| `ODataFetchFnRequest` | Conditional type options по semantic operation |
 
-`odataFetchFn` и `odataFetchFnDev` намеренно не находятся в public index.
+### DEV operation helpers
+
+| Export | Назначение |
+| --- | --- |
+| `odataQueryFnDev` | Dry-run query в dev, real query в production |
+| `odataReadFnDev` | Dry-run read в dev |
+| `odataCreateFnDev` | Dry-run create в dev |
+| `odataUpdateFnDev` | Dry-run update в dev |
+| `odataDeleteFnDev` | Dry-run delete в dev |
+| `odataFunctionImportFnDev` | Dry-run FunctionImport в dev |
+
+### Low-level requests
+
+| Export | Назначение |
+| --- | --- |
+| `odataFetch` | Собрать OData query options и выполнить OData V2 JSON request |
+| `ODataFetchOptions` | `$filter`, `$orderby`, `$select`, `$expand`, paging и SW policy |
+| `fetchBase` | Базовый SAP-aware `Response` transport |
+| `fetchODataJson` | `fetchBase` + OData V2 envelope parsing |
+| `fetchJson` | Вернуть только `data` из `fetchODataJson` |
+| `fetchQueryFn` | Query function для произвольного `Response` transform |
+| `isNoContentResponse` | Runtime guard marker-а 204/205 |
+| `fetchJsonQueryFn` | Deprecated raw JSON query factory |
+| `fetchJsonMutationFn` | Deprecated POST/PUT JSON factory |
+| `fetchDeleteFn` | Deprecated DELETE factory |
+
+### Project adapter и URL
+
+| Export | Назначение |
+| --- | --- |
+| `configureODataProjectAdapter` | Полностью заменить global adapter |
+| `getODataProjectAdapter` | Прочитать текущий adapter |
+| `ODataProjectAdapter` | Тип adapter |
+| `ODataProjectTechnicalEndpoint` | Тип metadata/collection technical endpoint |
+| `normalizeODataServiceName` | Убрать suffix после `;` |
+| `resolveODataBaseUrl` | Выбрать base URL с учётом dev DP0 service |
+| `resolveODataSapClient` | Получить SAP client из adapter |
+| `BaseURLType` | Union доступных base URL ids |
+| `BaseUrlMap` | Readonly map id → URL prefix |
+| `BaseODataURL` | Standard SAP OData prefix |
+| `BaseODataDp0URL` | DP0 prefix в dev/preview, standard в production |
+| `BaseODataUI2URL` | SAP UI2 prefix |
+| `BaseAppConfigURL` | Build-time app config prefix |
+| `getInputUrl` | Получить string URL из `RequestInfo` |
+| `normalizeRelativePath` | Удалить query/hash и гарантировать leading slash |
+| `RequestInitType` | `RequestInit` + internal retry markers |
+| `FetchErrorReportContext` | Контекст безопасного transport report |
+
+### SSO
+
+| Export | Назначение |
+| --- | --- |
+| `SsoRequiredError` | Специализированная authentication error |
+| `SsoForm` | Action/method/hidden inputs contract |
+| `SsoRecoveryArgs` | Аргументы recovery |
+| `SsoRequiredErrorOptions` | Options error, включая `recoverable` |
+| `isSsoForm` | Guard для SAMLRequest/SAMLResponse form |
+| `recoverSsoSession` | Controlled hidden iframe recovery |
+| `submitSsoForm` | Imperative submit hidden SSO form |
 
 ### Metadata
 
-| Exports | Назначение |
+| Export | Назначение |
 | --- | --- |
-| `fetchMetadata`, `odataMetadataQueryOptions`, `useODataMetadataQuery`, `getODataMetadataData` | Service metadata lifecycle |
-| `useODataMetadata`, `ODataEntity`, `useODataEntity` | Entity metadata/actions |
-| `useODataMetadataVersionQuery`, `applyODataMetadataVersion` | Technical version integration |
+| `fetchMetadata` | Создать query function загрузки `$metadata` |
+| `odataMetadataQueryOptions` | Stable metadata query options |
+| `useODataMetadataQuery` | Metadata query + version synchronization |
+| `useODataMetadataVersionQuery` | Отдельная диагностика server version |
+| `applyODataMetadataVersion` | Сравнить version и точечно invalidировать metadata |
+| `getODataMetadataData` | Императивно получить актуальную metadata через QueryClient |
+| `useODataMetadata` | Metadata одной Entity |
+| `useODataEntity` | Entity metadata + path/columns/code-text actions |
+| `ODataEntity` | Тип готовой Entity model без loading flag |
 
-`useODataEntity` возвращает actions `getEntityPath`, `getKeys`, `getKeyPairs`, `getKeyPairsMap`; actions нельзя вызывать до окончания metadata loading.
+### Collections
 
-### Collections и dependent UI contracts
-
-| Группа | Exports |
+| Export | Назначение |
 | --- | --- |
-| Query | `useODataCollectionQuery`, `createODataCollectionBaseQueryKey`, `createODataCollectionQueryKey`, `resolveODataCollectionSwCachePolicy`, `shouldRefreshODataCollectionCache` |
-| Model | `useODataCollection`, `useODataCollectionModel`, `useODataCollectionChains` |
-| Updates | `useODataCollectionUpdatesQuery`, `odataCollectionUpdatesQueryOptions`, `fetchODataCollectionUpdates`, `createODataCollectionUpdatesQueryKey`, `ODATA_COLLECTION_UPDATES_LOOKBACK_MS`, `ODATA_COLLECTION_DEFAULT_SW_CACHE`, `ODATA_COLLECTION_BUST_SW_CACHE`, `ODATA_COLLECTION_UPDATES_SW_CACHE` |
-| Dependent | `flattenODataDependentServices`, `sortODataDependentSegmentItemsByChains`, deprecated `sortODataDependentServicesByChains` |
-| Types | `ControlPanelVisibility`, `ODataServiceCollectionConfig`, `ODataCollectionConfig`, `ODataCollectionResult`, `ODataCollectionSegment`, `ODataCollectionModel`, `ODataCollectionProps`, `ODataSelectBaseProps`, `ODataSingleSelectProps`, `ODataDependentSegment`, `ODataDependentSegments`, `ODataDependentBaseProps`, `ODataDependentSegmentItem`, `ODataCollectionUpdateItem`, `ODataCollectionUpdatesResult`, `ODataCollectionUpdatesOptions` |
+| `useODataCollectionQuery` | Загрузить и подготовить reference collection |
+| `ODataCollectionResult` | Prepared collection snapshot |
+| `ODataServiceCollectionConfig` | Identity/server options справочника |
+| `ODataCollectionConfig` | Полный config query/UI справочника |
+| `createODataCollectionBaseQueryKey` | Prefix всех collection queries |
+| `createODataCollectionQueryKey` | Exact stable collection key |
+| `useODataCollectionUpdatesQuery` | Наблюдать технический список обновлений |
+| `odataCollectionUpdatesQueryOptions` | Query options списка обновлений |
+| `fetchODataCollectionUpdates` | Query function списка обновлений |
+| `createODataCollectionUpdatesQueryKey` | Stable updates key |
+| `ODataCollectionUpdatesOptions` | Настройка `staleTime` |
+| `ODataCollectionUpdatesResult` | Prepared updates snapshot |
+| `ODataCollectionUpdateItem` | Одна Entity и время изменения |
+| `shouldRefreshODataCollectionCache` | Проверить возраст snapshot |
+| `resolveODataCollectionSwCachePolicy` | Превратить TTL в bust policy при обновлении |
+| `ODATA_COLLECTION_UPDATES_LOOKBACK_MS` | Окно updates endpoint — 7 дней |
+| `ODATA_COLLECTION_DEFAULT_SW_CACHE` | Default long-lived collection policy |
+| `ODATA_COLLECTION_BUST_SW_CACHE` | Default forced refresh policy |
+| `ODATA_COLLECTION_UPDATES_SW_CACHE` | Updates endpoint SW policy |
 
-### Tables
+### Collection UI model и props types
 
-`useODataTableColumns`, `UseODataTableColumnsBuildConfig`, `UseODataTableColumnsEnrichConfig`, `UseODataTableColumnsConfig`, `UseODataTableColumnsResult`.
+| Export | Назначение |
+| --- | --- |
+| `useODataCollectionModel` | Зафиксировать model и подставить defaults |
+| `useODataCollection` | Search/filter/index/paging actions для UI |
+| `ODataCollectionModel` | Search, limits и active code key |
+| `ODataCollectionSegment` | Placeholder/hide/select-text contract |
+| `ODataCollectionProps` | Multi-value и dependencies props |
+| `ODataSelectBaseProps` | Общие props collection select |
+| `ODataSingleSelectProps` | Single-value вариант props |
+
+### Dependent segments
+
+| Export | Назначение |
+| --- | --- |
+| `ControlPanelVisibility` | `user`, `always` или `none` |
+| `ODataDependentSegment` | Segment + panel visibility |
+| `ODataDependentSegments` | Record segments по id |
+| `ODataDependentBaseProps` | Service config с несколькими segments |
+| `ODataDependentSegmentItem` | Нормализованный flat segment |
+| `flattenODataDependentServices` | Service groups → flat segments |
+| `useODataCollectionChains` | Chains из Query cache |
+| `sortODataDependentSegmentItemsByChains` | Stable segment-level ordering |
+| `sortODataDependentServicesByChains` | Deprecated service-level ordering |
+
+### Table columns
+
+| Export | Назначение |
+| --- | --- |
+| `useODataTableColumns` | Построить/обогатить TanStack columns по metadata |
+| `UseODataTableColumnsConfig` | Union build/enrich config |
+| `UseODataTableColumnsBuildConfig` | Config генерации columns |
+| `UseODataTableColumnsEnrichConfig` | Config обогащения existing columns |
+| `UseODataTableColumnsResult` | Columns, visibility, metadata, loading |
+
+## Частые ошибки
+
+### Ошибка: перепутаны `params` и `options`
+
+```ts
+// Неверная идея: key Entity положен в $filter.
+odataReadFn({
+  odata,
+  params: wrapODataParams({}),
+  options: {
+    expression: createFilterEqual("SalesOrderId", "50000123")
+  }
+});
+```
+
+Для read key должен быть в `params`. `options.expression` — `$filter` списка.
+
+### Ошибка: FunctionImport вызван через create
+
+Business verb «создать» не делает target Entity. Если metadata объявляет FunctionImport, используйте `odataFunctionImportFn`, даже если action бизнесово создаёт объект.
+
+### Ошибка: query key не содержит filter
+
+```ts
+// Плохо: все companyId используют один slot.
+queryKey: ["sales-orders"]
+```
+
+```ts
+// Хорошо.
+queryKey: ["sales-orders", { companyId }]
+```
+
+### Ошибка: cache data используется как form draft
+
+Не редактируйте object из `useQuery().data` напрямую. Создайте отдельный draft state/form model. После save обновите или инвалидируйте cache.
+
+### Ошибка: `autoParse` принят за schema validation
+
+`autoParse` преобразует известные top-level primitive fields по metadata. Он не доказывает, что обязательные поля существуют и business invariants соблюдены.
+
+### Ошибка: `sortByCode` добавили в collection key вручную
+
+Sort order — observer projection, не server identity. Используйте public key factory и hook option.
+
+### Ошибка: разные `clientFilter` используют один collection key
+
+Это может привести к конкурирующим snapshots. Вынесите различие в observer/component projection.
+
+### Ошибка: SW cache считается Query cache
+
+`x-sw-cache` не обновляет `useQuery().data` сам. После mutation всё равно нужна QueryClient cache strategy.
+
+### Ошибка: Dev helper используется как production mock
+
+В production `*Dev` выполняет реальный request. Для mock подменяйте network/runner в test layer.
+
+### Ошибка: raw deep import
+
+```ts
+// Запрещено: private implementation path.
+import { odataFetch } from "@ryuzaki13/react-foundation-api/src/odata/odataFetch";
+```
+
+```ts
+// Правильно.
+import { odataFetch } from "@ryuzaki13/react-foundation-api/odata";
+```
+
+## FAQ
+
+### Какой helper выбирать для обычного списка?
+
+`odataQueryFn`. Если это code/text справочник для UI — `useODataCollectionQuery`.
+
+### Как прочитать одну запись?
+
+`odataReadFn` и keys в `params`.
+
+### Как вызвать SAP action?
+
+Сначала посмотрите metadata. Если target — FunctionImport, используйте `odataFunctionImportFn`; method будет взят из metadata.
+
+### Нужно ли сначала вручную загружать `$metadata`?
+
+Нет. Metadata-aware helpers делают это через переданный QueryClient.
+
+### Почему runner требует `client`?
+
+Metadata является общим server snapshot. QueryClient обеспечивает reuse, deduplication, persistence и version invalidation.
+
+### Почему result helper-а содержит `{ data }`, а не только data?
+
+Envelope сохраняет `totalCount` и одинаково подходит query/mutation integrations.
+
+### Где находится `totalCount`?
+
+В `result.totalCount`, если server прислал OData V2 `d.__count`, обычно при `$inlinecount`.
+
+### Почему поле даты осталось строкой?
+
+Проверьте `autoParse: true`, metadata type и уровень вложенности. Parsing shallow: nested object не обходится рекурсивно.
+
+### Почему mutation получила 403?
+
+Transport автоматически обновляет CSRF token и повторяет request один раз. Если ошибка осталась, вероятны authorization/business rules, неверный SAP client или SSO problem.
+
+### Почему справочник пустой, но `isError === false`?
+
+Текущий collection loader логирует request error и возвращает пустой items result. Смотрите logs и используйте более строгий query helper для критичного flow.
+
+### Почему справочник скачался, хотя есть persisted cache?
+
+Snapshot мог быть старее server update, metadata update или семидневного coverage window. Тогда hook инвалидирует Query cache и отправляет SW bust policy.
+
+### Можно ли использовать пакет в SSR?
+
+Часть pure builders/types — да, но основной transport рассчитан на browser: cookies, `window`, `document`, iframe SSO, Service Worker headers. Разделяйте server/client boundaries явно.
+
+### Нужно ли вручную добавлять `sap-client`?
+
+Нет. Настройте `resolveSapClient` в project adapter; transport добавит header.
+
+### Можно ли передать custom headers?
+
+Да, через `init.headers`. Обязательные transport headers могут быть дополнены/нормализованы. Не подменяйте централизованные CSRF/SSO механизмы.
+
+### Можно ли использовать root import пакета?
+
+Нет. Используйте точный subpath:
+
+```ts
+import { odataQueryFn } from "@ryuzaki13/react-foundation-api/odata";
+```
+
+## Связанные модули
+
+- `@ryuzaki13/react-foundation-lib/odata-service` — metadata parser, filters, params, path builders и OData value conversion.
+- `@ryuzaki13/react-foundation-lib/query-client` — QueryClient, persistence и broadcast infrastructure.
+- `@ryuzaki13/react-foundation-lib/table` — metadata-driven columns и formatting runtime.
+- `@ryuzaki13/react-foundation-api/resource` — generic resource descriptors поверх TanStack Query.
+- `@ryuzaki13/react-foundation-api/persisted` — persisted resource operations и adapters.
+- `@ryuzaki13/react-foundation-api/error-report` — доставка безопасных error reports.
+
+Главный принцип модуля:
+
+```text
+Metadata определяет transport contract.
+Query key определяет identity server snapshot.
+QueryClient владеет snapshot.
+Mutation явно синхронизирует cache.
+Service Worker cache остаётся отдельным HTTP-слоем.
+```

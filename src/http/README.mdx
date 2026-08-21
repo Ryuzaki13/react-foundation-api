@@ -27,6 +27,8 @@ SAP Gateway/OData ──► /odata
 
 `http` не добавляет SAP headers, `credentials: include`, X-CSRF token, SSO recovery, OData V2 headers и не снимает envelope `{ d: { results } }`. Для SAP/OData используйте [`/odata`](../odata/README.mdx).
 
+Модуль намеренно остаётся небольшим. Он не пытается быть REST framework: выполняет request, проверяет HTTP status, разбирает базовый payload и требует от consumer-а runtime parser.
+
 ## Импорт
 
 ```ts
@@ -81,6 +83,54 @@ Helper не исправляет slash:
 
 Если input является `Request` или `URL`, `baseUrl` игнорируется. Это не proxy/url resolver.
 
+### Полные request options
+
+```ts
+type HttpRequestOptions = {
+	readonly baseUrl?: string;
+	readonly init?: RequestInit;
+};
+```
+
+Caller самостоятельно задаёт method, headers, cookies и signal:
+
+```ts
+const controller = new AbortController();
+
+const request = httpFetch("/profile", {
+	baseUrl: "/api",
+	init: {
+		method: "GET",
+		headers: {
+			Accept: "application/json",
+			Authorization: `Bearer ${token}`
+		},
+		credentials: "include",
+		signal: controller.signal
+	}
+});
+
+controller.abort();
+await request;
+```
+
+Отмена пробрасывается как native fetch error. Модуль не превращает её в специальный класс.
+
+### Зачем возвращать `Response`
+
+Используйте `httpFetch`, а не `httpFetchPayload`, когда нужны headers, Blob, stream или custom parser:
+
+```ts
+const response = await httpFetch("/reports/export.xlsx", {
+	baseUrl: "/api"
+});
+
+const file = await response.blob();
+const disposition = response.headers.get("Content-Disposition");
+```
+
+Response body читается один раз. После `blob()` нельзя повторно вызвать `json()` без предварительного `response.clone()`.
+
 ## `httpFetchPayload`
 
 ```ts
@@ -107,6 +157,10 @@ const profile = parseProfile(await httpFetchPayload("/api/profile"));
 ```
 
 Если сервер отдаёт JSON без корректного `Content-Type`, модуль вернёт JSON как string. Исправьте backend или разберите string на своей boundary.
+
+Content-Type приводится к lowercase, но распознаётся только media type, содержащий literal `application/json`. Например, `application/problem+json` будет прочитан как text. Для такого endpoint используйте `httpFetch` с custom parsing либо расширьте общий package contract.
+
+Invalid JSON с header `application/json` приводит к native parsing error. Он не заменяется на `null` или text.
 
 ## `httpJsonQueryFn`
 
@@ -144,6 +198,72 @@ Header `x-sw-cache` — только protocol с Service Worker. Без соот
 
 `parse` может вернуть преобразованную domain model, но обычно лучше ограничиться runtime validation и вынести бизнес-mapping владельцу entity.
 
+### Почему `parse` обязателен
+
+TypeScript generic исчезает из runtime:
+
+```ts
+// Аннотация User не проверяет network.
+const unsafe = httpJsonQueryFn<User>("/api/user", {
+	parse: (payload) => payload as User
+});
+```
+
+Минимальный parser:
+
+```ts
+function parseUser(payload: unknown): User {
+	if (!payload || typeof payload !== "object") {
+		throw new Error("User response должен быть object");
+	}
+
+	const record = payload as Record<string, unknown>;
+	if (typeof record.id !== "string" || typeof record.name !== "string") {
+		throw new Error("User response содержит неверные поля");
+	}
+
+	return { id: record.id, name: record.name };
+}
+```
+
+Для сложной формы используйте project-approved runtime schema validator.
+
+### Stable query options
+
+```ts
+import { queryOptions } from "@tanstack/react-query";
+
+const userKeys = {
+	all: ["users"] as const,
+	detail: (id: string) => [...userKeys.all, "detail", id] as const
+};
+
+export const userQueryOptions = (id: string) =>
+	queryOptions({
+		queryKey: userKeys.detail(id),
+		queryFn: httpJsonQueryFn(
+			`/api/users/${encodeURIComponent(id)}`,
+			{
+				parse: parseUser,
+				swCache: "off"
+			}
+		),
+		enabled: id.length > 0
+	});
+```
+
+Все inputs, меняющие response, должны быть в query key. URL encoding остаётся обязанностью caller-а.
+
+### AbortSignal priority
+
+Если `options.init.signal` отсутствует, factory подставляет signal TanStack Query. Если explicit signal уже задан, он имеет приоритет и QueryClient cancellation его не заменит.
+
+### Service Worker header
+
+Factory создаёт новый `Headers` object и выставляет `x-sw-cache`, когда `swCache` truthy. Если такой header уже был в `init.headers`, option `swCache` перезапишет его.
+
+Сам header ничего не кэширует без Service Worker, который реализует protocol. Для auth-sensitive responses используйте `off`, пока isolation users/sessions явно не доказана.
+
 ## `httpJsonMutationFn`
 
 ```ts
@@ -177,6 +297,99 @@ mutation.mutate({ name: "Анна" });
 
 `JSON.stringify` может бросить ошибку для `BigInt`/циклического объекта. `undefined` body сериализуется в `undefined`; убедитесь, что это соответствует endpoint.
 
+### Полные mutation options
+
+```ts
+type HttpMutationFnOptions<TInput, TResult> = HttpRequestOptions & {
+	readonly method?: "POST" | "PUT" | "PATCH" | "DELETE";
+	readonly mapBody?: (input: TInput) => unknown;
+	readonly parse: (data: unknown) => TResult;
+};
+```
+
+### Mapping input в body
+
+```ts
+type UpdateProfileInput = {
+	userId: string;
+	draft: {
+		name: string;
+		email: string;
+	};
+};
+
+const updateProfile = httpJsonMutationFn<UpdateProfileInput, User>(
+	"/api/profile",
+	{
+		method: "PATCH",
+		mapBody: ({ draft }) => ({
+			displayName: draft.name,
+			emailAddress: draft.email
+		}),
+		parse: parseUser
+	}
+);
+```
+
+URL factory фиксирован при создании. Если path зависит от input, создайте feature wrapper, который внутри строит подходящий mutation function или вызывает `httpFetchPayload`.
+
+### Особенность nullish body mapper
+
+Implementation выбирает body так:
+
+```ts
+const body = options.mapBody?.(input) ?? input;
+```
+
+Если `mapBody` вернул `null` или `undefined`, будет сериализован исходный input. Mapper не может этим способом создать body `null` или пустой body.
+
+Для endpoint, которому действительно нужен `null`, передайте `null` как input без mapper-а. Для запроса без body используйте `httpFetchPayload`.
+
+### Content-Type
+
+`application/json` добавляется только при отсутствии header. Custom media type сохраняется:
+
+```ts
+const patchResource = httpJsonMutationFn("/api/resource", {
+	method: "PATCH",
+	init: {
+		headers: {
+			"Content-Type": "application/merge-patch+json"
+		}
+	},
+	parse: parseResource
+});
+```
+
+### Cache после mutation
+
+Factory не знает query keys и ничего не инвалидирует:
+
+```tsx
+const queryClient = useQueryClient();
+
+const mutation = useMutation({
+	mutationFn: updateProfile,
+	onSuccess: (updated) => {
+		queryClient.setQueryData(userKeys.detail(updated.id), updated);
+		void queryClient.invalidateQueries({ queryKey: userKeys.all });
+	}
+});
+```
+
+Query cache хранит server snapshot. Не используйте object из cache как mutable form draft.
+
+### Manual abort mutation
+
+```ts
+const controller = new AbortController();
+const promise = updateProfile(input, controller.signal);
+controller.abort();
+await promise;
+```
+
+`useMutation` сам не передаёт AbortSignal. Не переиспользуйте уже aborted controller.
+
 ## HTTP errors
 
 Для `response.ok === false` обе низкоуровневые функции бросают обычный `Error`:
@@ -189,6 +402,20 @@ HTTP error: <message>
 
 Network error/CORS/abort от глобального `fetch` пробрасывается без обёртки.
 
+При non-2xx transport читает error body, чтобы построить message. Consumer уже не получает этот Response.
+
+Для JSON error object поля не анализируются:
+
+```json
+{
+	"message": "Нет доступа"
+}
+```
+
+При status `403` message будет fallback `HTTP error: 403 Forbidden`, потому что parsed payload является object, а не string.
+
+Модуль не повторяет request. Retry policy принадлежит TanStack Query или caller. Обычный `Error` из `httpFetch` не содержит числовой status, поэтому status-aware retry требует отдельного project error contract.
+
 ## `RouteError`
 
 ```ts
@@ -196,6 +423,102 @@ throw new RouteError(404);
 ```
 
 Это маленький `Error` с числовым полем `status` и пустым message. `httpFetch` сам его не создаёт. Класс нужен для routing/error-boundary policy приложения, если оно договорилось понимать такой error.
+
+```ts
+async function profileLoader() {
+	const profile = await loadProfile();
+	if (!profile) throw new RouteError(404);
+	return profile;
+}
+```
+
+`Object.setPrototypeOf` внутри class обеспечивает надёжный `instanceof RouteError`. Класс не содержит response body, headers или `cause` и не заменяет полноценную structured transport error.
+
+## Тестирование
+
+```ts
+import { afterEach, expect, it, vi } from "vitest";
+import {
+	httpFetchPayload,
+	httpJsonQueryFn
+} from "@ryuzaki13/react-foundation-api/http";
+
+afterEach(() => vi.unstubAllGlobals());
+
+it("разбирает JSON payload", async () => {
+	vi.stubGlobal(
+		"fetch",
+		vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ id: "u-1", name: "Анна" }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" }
+			})
+		)
+	);
+
+	await expect(httpFetchPayload("/api/user")).resolves.toEqual({
+		id: "u-1",
+		name: "Анна"
+	});
+});
+
+it("отклоняет неверный runtime shape", async () => {
+	vi.stubGlobal(
+		"fetch",
+		vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ id: 10 }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" }
+			})
+		)
+	);
+
+	const queryFn = httpJsonQueryFn("/api/user", { parse: parseUser });
+	await expect(queryFn()).rejects.toThrow(
+		"User response содержит неверные поля"
+	);
+});
+```
+
+Проверяйте минимум:
+
+- string `baseUrl + path`;
+- Request/URL input игнорирует baseUrl;
+- 204/205 возвращает `null`;
+- JSON и text parsing;
+- invalid JSON;
+- non-2xx error message;
+- explicit signal priority;
+- `x-sw-cache` header;
+- `mapBody` и JSON serialization;
+- custom Content-Type;
+- feature cache strategy после mutation.
+
+## Частые ошибки
+
+### Generic вместо runtime parser
+
+`payload as User` только заставляет TypeScript поверить разработчику.
+
+### Неверные slashes
+
+URL соединяется простой конкатенацией. Придерживайтесь одной convention.
+
+### Ожидать SAP side effects
+
+`/http` не добавляет CSRF, SSO, SAP client или OData envelope parser.
+
+### Вернуть `null` из `mapBody`
+
+Из-за `?? input` будет отправлен исходный input.
+
+### Ожидать automatic invalidation
+
+Mutation factory не знает query keys. Стратегию cache задаёт owner ресурса.
+
+### Отправлять FormData через JSON factory
+
+`httpJsonMutationFn` всегда вызывает `JSON.stringify`. Для FormData используйте `httpFetch`.
 
 ## Ошибки, runtime и безопасность
 
@@ -206,6 +529,32 @@ throw new RouteError(404);
 - Не помещайте token/secret в query string и cache key.
 - `x-sw-cache` для персональных данных требует изолированной cache policy.
 - На SSR абсолютный/относительный URL и cookies должны быть настроены server runtime-ом.
+
+## FAQ
+
+### Чем `httpFetchPayload` отличается от `fetch(...).json()`?
+
+Он проверяет `response.ok`, понимает 204/205 и выбирает JSON/text по Content-Type.
+
+### Можно ли скачать Blob?
+
+Да: `httpFetch`, затем `response.blob()`.
+
+### Можно ли отправить FormData?
+
+Да через `httpFetch`. JSON mutation factory для этого не подходит.
+
+### Как задать timeout?
+
+Передайте signal от `AbortSignal.timeout(...)` в поддерживаемой среде или используйте `AbortController`.
+
+### Почему JSON query может получить text/null?
+
+Low-level parser допускает эти shapes, а обязательный `parse` определяет валидный result endpoint-а.
+
+### Где хранить query keys?
+
+Рядом с public API entity/feature либо в `/resource`, если нужен generic descriptor.
 
 ## Полный API
 

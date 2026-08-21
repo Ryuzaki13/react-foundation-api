@@ -117,12 +117,12 @@ Parser делает `trim` строковых полей, но не декоди
 ```ts
 interface UserTransport {
 	transportNo: string;
-	description?: string;
-	owner?: string;
-	targetSystem?: string;
-	function?: string;
-	status?: string;
-	parentTransportNo?: string;
+	description: string | undefined;
+	owner: string | undefined;
+	targetSystem: string | undefined;
+	functionCode: string | undefined;
+	statusCode: string | undefined;
+	parentTransportNo: string | undefined;
 }
 ```
 
@@ -134,8 +134,8 @@ interface UserTransport {
 | `AS4TEXT` | `description` | Описание |
 | `AS4USER` | `owner` | Владелец |
 | `TARSYSTEM` | `targetSystem` | Целевая система |
-| `TRFUNCTION` | `function` | SAP transport function |
-| `TRSTATUS` | `status` | SAP status |
+| `TRFUNCTION` | `functionCode` | SAP transport function code |
+| `TRSTATUS` | `statusCode` | SAP status code |
 | `STRKORR` | `parentTransportNo` | Родительский request/task |
 
 Optional-поле может быть `undefined`. Проверяйте его перед отображением:
@@ -146,6 +146,281 @@ const label = transport.description
 	: transport.transportNo;
 ```
 
+## Как устроен ADT response
+
+ADT endpoint возвращает не OData JSON, а ABAP XML. Реальный документ обычно содержит namespace и несколько служебных обёрток:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+	<asx:values>
+		<DATA>
+			<CTS_REQ_HEADER>
+				<TRKORR>DEVK900001</TRKORR>
+				<AS4TEXT>Исправление отчёта</AS4TEXT>
+				<AS4USER>IVANOV</AS4USER>
+				<TARSYSTEM>QAS</TARSYSTEM>
+				<TRFUNCTION>K</TRFUNCTION>
+				<TRSTATUS>D</TRSTATUS>
+				<STRKORR>DEVK900000</STRKORR>
+			</CTS_REQ_HEADER>
+		</DATA>
+	</asx:values>
+</asx:abap>
+```
+
+Parser намеренно не зависит от точного положения `CTS_REQ_HEADER`: он рекурсивно обходит objects и arrays. Поэтому дополнительная server wrapper-структура не ломает parsing, пока имена полезных tags остаются прежними.
+
+### Request parameters endpoint
+
+```text
+_action=FIND
+trfunction=K
+```
+
+Они зафиксированы внутри `fetchUserTransports`. Consumer не может изменить owner, function, status или paging через options. Если нужен другой ADT query, создайте отдельный API у владельца package, а не подменяйте поведение этой функции string manipulation-ом.
+
+### Почему используется общий SAP transport
+
+Хотя response не OData, `fetchUserTransports` использует `fetchBase` из `/odata`, потому что ему нужны те же infrastructure concerns:
+
+- cookies текущей SAP session;
+- `sap-language` и configured `sap-client`;
+- manual redirect detection;
+- automatic SSO recovery;
+- единая HTTP error policy.
+
+Base URL передаётся как пустая строка, потому что path уже начинается с `/sap/bc/adt`.
+
+## Подробный алгоритм parser-а
+
+### 1. Пустой документ
+
+```ts
+parseUserTransportsXml("");
+// []
+
+parseUserTransportsXml("   \n\t");
+// []
+```
+
+Whitespace-only input не отправляется в XML parser.
+
+### 2. XML остаётся строковым
+
+`fast-xml-parser` настроен с `parseTagValue: false`. Значения вроде `0001`, `D` или transport number не превращаются автоматически в numbers/booleans.
+
+Это важно:
+
+```xml
+<TRKORR>DEVK900001</TRKORR>
+```
+
+должен остаться exact identifier, а не пройти numeric coercion.
+
+### 3. Поиск всех headers
+
+Parser собирает каждый nested value по key `CTS_REQ_HEADER`. Один XML parser может представить:
+
+- один header как object;
+- несколько соседних headers как array;
+- headers внутри дополнительных wrappers.
+
+Оба случая нормализуются к одному массиву.
+
+### 4. Runtime narrowing
+
+Любой найденный value сначала проверяется как record. Primitive/null не превращаются в transport.
+
+### 5. Нормализация text
+
+Все SAP fields проходят text normalization:
+
+```text
+"  DEVK900001  " -> "DEVK900001"
+"   "            -> undefined
+null             -> undefined
+```
+
+Запись без `transportNo` отбрасывается полностью.
+
+### 6. Дедупликация
+
+```ts
+parseUserTransportsXml(`
+<root>
+	<CTS_REQ_HEADER>
+		<TRKORR>DEVK900001</TRKORR>
+		<AS4TEXT>Первое описание</AS4TEXT>
+	</CTS_REQ_HEADER>
+	<CTS_REQ_HEADER>
+		<TRKORR>DEVK900001</TRKORR>
+		<AS4TEXT>Второе описание</AS4TEXT>
+	</CTS_REQ_HEADER>
+</root>
+`);
+```
+
+Вернёт первую запись. Parser не объединяет optional fields дубликатов.
+
+### 7. Fallback без `CTS_REQ_HEADER`
+
+Некоторые responses содержат только nested `TRKORR`. Тогда parser формирует минимальные records:
+
+```ts
+parseUserTransportsXml(`
+<root>
+	<RESULT><TRKORR>DEVK900003</TRKORR></RESULT>
+	<RESULT><TRKORR>DEVK900004</TRKORR></RESULT>
+</root>
+`);
+```
+
+```ts
+[
+	{
+		transportNo: "DEVK900003",
+		description: undefined,
+		owner: undefined,
+		targetSystem: undefined,
+		functionCode: undefined,
+		statusCode: undefined,
+		parentTransportNo: undefined
+	},
+	// ...
+]
+```
+
+Fallback включается только если ни одного корректного header record не найдено.
+
+## Использование с TanStack Query
+
+Модуль не навязывает query key/stale policy. Их определяет feature:
+
+```tsx
+import { queryOptions, useQuery } from "@tanstack/react-query";
+import { fetchUserTransports } from "@ryuzaki13/react-foundation-api/adt";
+
+const adtTransportKeys = {
+	all: ["adt-transports"] as const,
+	list: () => [...adtTransportKeys.all, "list"] as const
+};
+
+export const adtTransportsQueryOptions = () =>
+	queryOptions({
+		queryKey: adtTransportKeys.list(),
+		queryFn: fetchUserTransports,
+		staleTime: 5 * 60 * 1000
+	});
+
+function TransportSelect() {
+	const query = useQuery(adtTransportsQueryOptions());
+
+	if (query.isPending) return <p>Загрузка транспортов…</p>;
+	if (query.isError) return <p>{query.error.message}</p>;
+	if (query.data.length === 0) return <p>Доступных транспортов нет</p>;
+
+	return (
+		<select>
+			{query.data.map((item) => (
+				<option key={item.transportNo} value={item.transportNo}>
+					{item.transportNo}
+					{item.description ? ` — ${item.description}` : ""}
+				</option>
+			))}
+		</select>
+	);
+}
+```
+
+`fetchUserTransports` не принимает `AbortSignal`, поэтому query cancellation не прерывает underlying fetch через этот API. Не обещайте UI мгновенный transport abort. Если это станет обязательным, контракт должен быть расширен в package.
+
+Query key не должен содержать user secrets. Если список зависит от logged-in user, смена user/session должна сопровождаться очисткой auth-sensitive Query cache на project boundary.
+
+## Parent request и task
+
+`parentTransportNo` обычно помогает отличить task от верхнеуровневого request:
+
+```ts
+function getTransportLabel(transport: UserTransport) {
+	const kind = transport.parentTransportNo ? "Задача" : "Запрос";
+	return `${kind}: ${transport.transportNo}`;
+}
+```
+
+Это только presentation inference. Модуль не интерпретирует SAP status/function codes и не гарантирует бизнес-классификацию. Для правил конкретной системы используйте domain mapping приложения.
+
+## Тестирование
+
+Parser — pure function, поэтому тестируйте fixtures без network:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { parseUserTransportsXml } from "@ryuzaki13/react-foundation-api/adt";
+
+it("сохраняет leading zeros и optional fields", () => {
+	const result = parseUserTransportsXml(`
+		<root>
+			<CTS_REQ_HEADER>
+				<TRKORR>DEVK900001</TRKORR>
+				<TRSTATUS>D</TRSTATUS>
+			</CTS_REQ_HEADER>
+		</root>
+	`);
+
+	expect(result).toEqual([
+		{
+			transportNo: "DEVK900001",
+			description: undefined,
+			owner: undefined,
+			targetSystem: undefined,
+			functionCode: undefined,
+			statusCode: "D",
+			parentTransportNo: undefined
+		}
+	]);
+});
+```
+
+Минимальный набор cases:
+
+- single header;
+- array headers;
+- nested wrappers/namespaces;
+- duplicate number;
+- whitespace fields;
+- empty XML;
+- fallback `TRKORR`;
+- malformed XML и ожидаемая ошибка.
+
+Для transport integration mock-айте `fetch`/MSW и проверяйте Content-Type `text/html`, XML body и HTTP error. Не используйте real SAP credentials в tests.
+
+## Частые ошибки
+
+### Использовать поля `function` и `status`
+
+Правильные имена public contract — `functionCode` и `statusCode`.
+
+### Считать status code готовым label
+
+`"D"` остаётся строкой `"D"`. Расшифровка зависит от SAP contract проекта и не выполняется package-ом.
+
+### Принимать пустой array за любую ошибку
+
+Пустой или whitespace XML даёт `[]`, но HTTP, HTML и malformed XML errors выбрасываются. Обрабатывайте error отдельно от empty state.
+
+### Объединять ADT и UI2 records без mapper-а
+
+`/adt` и `/transport` имеют разные source contracts. Если feature показывает их вместе, создайте явную domain model и collision policy.
+
+### Deep import parser-а
+
+Используйте только:
+
+```ts
+import { parseUserTransportsXml } from "@ryuzaki13/react-foundation-api/adt";
+```
+
 ## Ошибки и ограничения
 
 - `fast-xml-parser` должен быть установлен в host, использующем этот entrypoint.
@@ -154,6 +429,28 @@ const label = transport.description
 - SSO/cookies требуют browser/proxy окружения SAP. На server runtime поведение зависит от переданного глобального `fetch` и cookie boundary.
 - HTML-response, HTTP error и XML parse error не превращаются в `[]`.
 - Дедупликация выполняется только по `transportNo` и сохраняет первую найденную запись.
+
+## FAQ
+
+### Можно ли передать другой endpoint?
+
+Нет. `fetchUserTransports` — конкретный ADT use case с фиксированным endpoint.
+
+### Можно ли получить только transports конкретного owner?
+
+Не через текущий public API. Фильтруйте result локально либо расширьте package contract, если server-side filter является общей потребностью.
+
+### Parser меняет исходную XML string?
+
+Нет. Он создаёт новые JS objects.
+
+### Почему optional fields явно содержат `undefined`?
+
+Таков стабильный `UserTransport` shape. Consumer может безопасно destructure поля без проверки их наличия как properties.
+
+### Работает ли в Node?
+
+Pure parser работает при наличии `fast-xml-parser`. Network function зависит от общего SAP transport, URL/cookies/build constants и в первую очередь рассчитана на browser application.
 
 ## Полный API
 

@@ -8,6 +8,14 @@ import { Meta } from "@storybook/addon-docs/blocks";
 
 > Здесь слово `transport` означает SAP transport request. Это не generic HTTP transport. Для обычного HTTP используйте [`/http`](../http/README.mdx), для SAP/OData transport infrastructure — [`/odata`](../odata/README.mdx).
 
+Для разработчика без SAP-базы: transport request — контейнер, в котором изменения переносятся между SAP systems. Workbench и customizing — разные категории, поэтому package сохраняет `type` рядом с каждым id.
+
+```text
+SAP UI2 WorkbenchRequests ──► normalize ──┐
+                                         ├─► TransportRequest[]
+SAP UI2 CustomizingRequests ─► normalize ─┘
+```
+
 ## Импорт
 
 ```ts
@@ -49,6 +57,19 @@ type TransportRequestScope = TransportRequestType | "all";
 
 Без аргумента загружается только `workbench`.
 
+### Как выбрать scope
+
+| Нужно UI | Scope |
+| --- | --- |
+| Только workbench request | `workbench` или аргумент не передан |
+| Только customizing request | `customizing` |
+| Единый список обеих категорий | `all` |
+
+```ts
+await fetchTransportRequests();
+// То же, что fetchTransportRequests("workbench")
+```
+
 ## Fetch functions
 
 | Функция | Endpoint | Результат |
@@ -70,6 +91,57 @@ type TransportRequestScope = TransportRequestType | "all";
 
 Если один из двух запросов `fetchUserTransportRequests` завершился ошибкой, `Promise.all` отклоняется и частичный object не возвращается.
 
+### Точные network paths
+
+```text
+base URL odataUi2
+├── /TRANSPORT/WorkbenchRequests
+└── /TRANSPORT/CustomizingRequests
+```
+
+В dev/preview `odataUi2` обычно становится:
+
+```text
+/sap-dp0/opu/odata/UI2
+```
+
+В production:
+
+```text
+/sap/opu/odata/UI2
+```
+
+Итоговый URL определяется OData transport build/project configuration. Consumer не должен добавлять этот prefix вручную.
+
+### Что делает каждая function
+
+`fetchWorkbenchTransportRequests()`:
+
+1. Выполняет UI2 OData GET.
+2. Снимает OData V2 envelope общим transport-ом.
+3. Если payload falsy, возвращает `[]`.
+4. Нормализует records с type `workbench`.
+
+`fetchCustomizingTransportRequests()` делает то же с type `customizing`.
+
+`fetchUserTransportRequests()` запускает обе функции параллельно через `Promise.all`, затем строит:
+
+```ts
+{
+	workbench,
+	customizing,
+	all: [...workbench, ...customizing]
+}
+```
+
+`fetchTransportRequests(scope)` — удобный selector над этими calls.
+
+### AbortSignal
+
+Public fetch functions не принимают `AbortSignal`. Их можно использовать как TanStack queryFn, но cancellation QueryClient не прерывает underlying request через этот API.
+
+Если abort становится обязательным для общей инфраструктуры, расширьте package contract; не создавайте deep import низкоуровневого helper-а.
+
 ## Результат
 
 ```ts
@@ -90,6 +162,27 @@ interface UserTransportRequests {
 	all: TransportRequest[];
 }
 ```
+
+### Поля результата
+
+| Поле | Всегда есть | Смысл |
+| --- | --- | --- |
+| `id` | да | Нормализованный SAP request number |
+| `type` | да | `workbench` либо `customizing` |
+| `text` | да | Нормализованное description; может быть пустой строкой |
+| `isDefaultRequest` | да | `true` только при strict input `true` |
+
+Надёжный UI label:
+
+```ts
+function getRequestLabel(request: TransportRequest) {
+	return request.text
+		? `${request.id} — ${request.text}`
+		: request.id;
+}
+```
+
+Не используйте `text` как identity: description может измениться или быть пустым.
 
 ## `normalizeTransportRequests`
 
@@ -120,6 +213,58 @@ const normalized = normalizeTransportRequests(
 
 Нормализация не изменяет исходный array/objects.
 
+### Raw contract
+
+```ts
+interface TransportRequestRaw {
+	id?: string | null;
+	description?: string | null;
+	isDefaultRequest?: boolean | null;
+}
+```
+
+Все поля могут отсутствовать. После normalization `id`, `text`, `type`, `isDefaultRequest` уже обязательны.
+
+### Пошаговый пример normalization
+
+```ts
+const source = [
+	{
+		id: " DP0K970966 ",
+		description: " MIME типы ",
+		isDefaultRequest: true
+	},
+	{
+		id: "DP0K970966",
+		description: "Дубликат",
+		isDefaultRequest: false
+	},
+	{
+		id: null,
+		description: "Без id"
+	}
+];
+
+const result = normalizeTransportRequests(source, "workbench");
+```
+
+```ts
+[
+	{
+		id: "DP0K970966",
+		type: "workbench",
+		text: "MIME типы",
+		isDefaultRequest: true
+	}
+]
+```
+
+Почему остаётся первая запись: функция сразу добавляет нормализованный id в `Set` и пропускает последующие совпадения.
+
+### Дубликаты между типами
+
+Normalization выполняется отдельно для каждого endpoint. Одинаковый id может присутствовать один раз в workbench и один раз в customizing. Array `all` сохранит обе записи, потому что их semantic identity различается по `type`.
+
 ## Query keys
 
 ```ts
@@ -146,6 +291,60 @@ const query = useQuery({
 
 Factory ключей не создаёт query options и не передаёт AbortSignal; lifecycle запроса настраивает consumer.
 
+### Reusable query options
+
+```ts
+import { queryOptions } from "@tanstack/react-query";
+import {
+	fetchTransportRequests,
+	transportRequestKeys
+} from "@ryuzaki13/react-foundation-api/transport";
+
+export const transportRequestsQueryOptions = (
+	scope: TransportRequestScope = "workbench"
+) =>
+	queryOptions({
+		queryKey: transportRequestKeys.list(scope),
+		queryFn: () => fetchTransportRequests(scope),
+		staleTime: 5 * 60 * 1000
+	});
+```
+
+`scope` обязательно входит в key. Иначе workbench/customizing/all начнут делить один cache slot.
+
+### React UI со всеми состояниями
+
+```tsx
+function TransportRequestSelect({
+	scope = "workbench",
+	value,
+	onChange
+}: {
+	scope?: TransportRequestScope;
+	value?: string;
+	onChange: (id: string) => void;
+}) {
+	const query = useQuery(transportRequestsQueryOptions(scope));
+
+	if (query.isPending) return <p>Загрузка transport requests…</p>;
+	if (query.isError) return <p role="alert">{query.error.message}</p>;
+	if (query.data.length === 0) return <p>Доступных requests нет</p>;
+
+	return (
+		<select value={value ?? ""} onChange={(event) => onChange(event.target.value)}>
+			<option value="">Выберите transport request</option>
+			{query.data.map((request) => (
+				<option key={getTransportRequestKey(request)} value={request.id}>
+					{request.text ? `${request.id} — ${request.text}` : request.id}
+				</option>
+			))}
+		</select>
+	);
+}
+```
+
+Если `scope === "all"`, form value только `id` может быть неоднозначным при collision разных types. В таком UI храните `{ type, id }` или stable key и явно преобразуйте его при submit.
+
 ## Stable key отдельной записи
 
 ```ts
@@ -154,6 +353,16 @@ getTransportRequestKey({ type: "workbench", id: "DEVK900001" });
 ```
 
 Включение `type` предотвращает collision одинаковых ID из разных списков. Функция не escaping-ит `:`; SAP transport ID обычно не содержит этот символ.
+
+Stable key предназначен для React `key`, maps и UI identity:
+
+```ts
+const map = new Map(
+	requests.map((request) => [getTransportRequestKey(request), request])
+);
+```
+
+Не отправляйте `workbench:DEVK...` в backend вместо request id, если backend ожидает только `id`.
 
 ## Отличие от `/adt`
 
@@ -166,6 +375,116 @@ getTransportRequestKey({ type: "workbench", id: "DEVK900001" });
 
 Не объединяйте records автоматически: контракты endpoint и значения полей различаются.
 
+ADT result богаче техническими fields (`owner`, `statusCode`, `parentTransportNo`), но UI2 module явно разделяет workbench/customizing и знает default request. Выбор source зависит от backend use case, а не от того, какой endpoint оказался удобнее.
+
+## Обработка ошибок
+
+Network и OData V2 errors пробрасываются caller-у. Function не превращает HTTP error в пустой array.
+
+Для `fetchUserTransportRequests` действует fail-fast result contract:
+
+```text
+workbench success + customizing error = Promise rejection
+```
+
+Если product допускает partial UI, orchestrate calls отдельно на feature boundary:
+
+```ts
+const [workbench, customizing] = await Promise.allSettled([
+	fetchWorkbenchTransportRequests(),
+	fetchCustomizingTransportRequests()
+]);
+```
+
+После этого feature обязана явно показать partial state; не маскируйте failed category как настоящий пустой список.
+
+## Cache после создания transport-а
+
+Этот module только читает lists. Если другой feature создаёт request через OData/ADT, после успеха инвалидируйте подходящий scope:
+
+```ts
+await queryClient.invalidateQueries({
+	queryKey: transportRequestKeys.all
+});
+```
+
+Prefix `all` здесь означает «все query keys семейства transport requests», а не только scope `"all"`.
+
+Точечно:
+
+```ts
+await queryClient.invalidateQueries({
+	queryKey: transportRequestKeys.list("workbench")
+});
+```
+
+## Тестирование
+
+### Pure normalization
+
+```ts
+import { expect, it } from "vitest";
+import { normalizeTransportRequests } from "@ryuzaki13/react-foundation-api/transport";
+
+it("trim-ит поля и сохраняет первый duplicate", () => {
+	expect(
+		normalizeTransportRequests(
+			[
+				{ id: " A ", description: " Первый ", isDefaultRequest: true },
+				{ id: "A", description: " Второй " }
+			],
+			"workbench"
+		)
+	).toEqual([
+		{
+			id: "A",
+			type: "workbench",
+			text: "Первый",
+			isDefaultRequest: true
+		}
+	]);
+});
+```
+
+### Что проверить
+
+- пустой/null/whitespace id удаляется;
+- пустое description становится `""`;
+- только strict `true` даёт default flag;
+- duplicates сохраняют первую запись;
+- workbench/customizing types проставляются argument-ом;
+- `all` сохраняет порядок категорий;
+- одинаковые ids разных types имеют разные stable keys;
+- ошибка одного parallel endpoint отклоняет combined function.
+
+Network tests должны mock-ать UI2 endpoints и OData envelope. Не используйте real SAP session в unit tests.
+
+## Частые ошибки
+
+### Использовать module как generic HTTP transport
+
+Название относится к SAP transport requests. Для HTTP есть `/http`.
+
+### Не включить scope в query key
+
+Каждый scope возвращает разные данные.
+
+### Использовать `id` как React key при scope `all`
+
+Используйте `getTransportRequestKey`, чтобы учесть type.
+
+### Считать пустой `text` ошибкой
+
+Public normalized contract допускает пустое description.
+
+### Ожидать partial result
+
+Combined fetch использует `Promise.all` и fail-fast semantics.
+
+### Deep import OData transport
+
+Application импортирует только `@ryuzaki13/react-foundation-api/transport`. Internal calls остаются detail package-а.
+
 ## Ошибки и ограничения
 
 - Модуль только читает requests; он не создаёт, не освобождает и не импортирует transport.
@@ -173,6 +492,32 @@ getTransportRequestKey({ type: "workbench", id: "DEVK900001" });
 - Пустой/falsy payload endpoint превращается в `[]`; HTTP/SSO errors пробрасываются.
 - Нет автоматической TanStack Query cache policy — используйте экспортированные keys.
 - Runtime требует настроенного SAP proxy/base URLs и cookies.
+
+## FAQ
+
+### Как получить обе категории?
+
+`fetchTransportRequests("all")` для flat array или `fetchUserTransportRequests()` для grouped object.
+
+### Какая категория загружается по умолчанию?
+
+`workbench`.
+
+### Почему `all` может содержать одинаковый id дважды?
+
+Если он пришёл из разных categories, records имеют разные `type` и считаются разными.
+
+### Можно ли создать transport request?
+
+Нет. Модуль read-only.
+
+### Есть ли automatic query cache?
+
+Нет. Используйте exported key factory вместе с TanStack Query.
+
+### Работает ли без SAP SSO?
+
+Только если endpoint доступен и auth boundary настроена host environment. Package использует общий SAP transport с cookies/SSO policy.
 
 ## Полный API
 

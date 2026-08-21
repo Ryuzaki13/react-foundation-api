@@ -31,6 +31,31 @@ type ServerFnTransport<TData, TResponse> = (
 
 Название `server-fn` описывает типичный источник функции. Оно не гарантирует server-only выполнение и не создаёт security boundary.
 
+Для начинающего разработчика:
+
+- `serverFn` — transport function framework-а;
+- `buildData` — явный mapper application inputs в transport DTO;
+- `transform` — mapper transport response в application result;
+- resource operation — описание того, как generic `/resource` должен выполнить query/mutation.
+
+```text
+React component
+    │ useResourceQuery/useResourceMutation
+    ▼
+resource descriptor
+    │ execute context
+    ▼
+server-fn adapter
+    │ { data }
+    ▼
+framework server function stub
+    │ network/server boundary framework-а
+    ▼
+server handler
+```
+
+Этот package адаптирует только участок `execute context → { data }`. Он не реализует network protocol framework-а.
+
 ## Импорт
 
 ```ts
@@ -48,6 +73,16 @@ import type {
 ```
 
 Нужен `@tanstack/react-query`; созданные operations обычно подключаются через `/resource` или `/persisted` descriptor.
+
+Пакет не имеет root import. Не импортируйте внутренний файл:
+
+```ts
+// Правильно.
+import { createServerFnQueryOperation } from "@ryuzaki13/react-foundation-api/server-fn";
+
+// Неправильно.
+import { createServerFnQueryOperation } from "@ryuzaki13/react-foundation-api/src/server-fn/serverFn";
+```
 
 ## Query operation
 
@@ -90,6 +125,87 @@ const searchOrdersOperation = createServerFnQueryOperation({
 - optional `staleTime`;
 - optional `gcTime`.
 
+### Полный query lifecycle
+
+```text
+Resource проверяет scope/isEnabled
+          │
+          ▼
+operation.execute({ scope, args, client, signal })
+          │
+          ▼
+buildData(scope, args)
+          │
+          ▼
+executor(serverFn, { data }, { client, signal })
+          │
+          ▼
+server response
+          │
+          ├─ transform задан ──► transform(response, { scope, args })
+          └─ transform нет ────► response
+```
+
+`buildData` вызывается на каждом фактическом execute, а не при создании descriptor-а.
+
+### Scope, args и data — разные вещи
+
+```ts
+type Scope = string; // companyId
+type Args = { search: string; page: number };
+type Data = {
+	company: string;
+	query: string;
+	offset: number;
+};
+```
+
+```ts
+buildData: (companyId, args) => ({
+	company: companyId,
+	query: args.search.trim(),
+	offset: args.page * 50
+})
+```
+
+Не передавайте args как data автоматически: имена/форматы transport DTO могут отличаться, а scope часто должен попасть внутрь request.
+
+### `isEnabled`
+
+Callback получает nullable scope, потому что hook может быть вызван до готовности route/form state:
+
+```ts
+isEnabled: (companyId, args) =>
+	Boolean(companyId && args.search.trim().length >= 2)
+```
+
+Сам adapter просто сохраняет callback в operation. Проверку выполняет `/resource` при построении query options. Не вызывайте `operation.execute` вручную с invalid scope и не ожидайте, что `isEnabled` внутри остановит его.
+
+### `staleTime` и `gcTime`
+
+Это hints TanStack Query lifecycle, а не transport timeout:
+
+- `staleTime` — сколько snapshot считается fresh;
+- `gcTime` — когда неактивный snapshot можно удалить;
+- они не прерывают network request;
+- они не определяют server cache.
+
+### Transform и runtime validation
+
+```ts
+transform: (response, { scope, args }) => {
+	if (!response || !Array.isArray(response.items)) {
+		throw new Error("ServerFn response не содержит items");
+	}
+
+	return response.items.map((item) => mapOrderDto(item, scope, args));
+}
+```
+
+TypeScript generic не проверяет response framework-а. Если server/client могут иметь разные versions или endpoint получает внешние данные, выполняйте runtime validation.
+
+Ошибка `buildData`, executor или transform становится query error.
+
 ## Mutation operation
 
 ```ts
@@ -113,6 +229,59 @@ const saveOrderOperation = createServerFnMutationOperation({
 
 Mutation operation не имеет `AbortSignal` в generic resource contract. Custom executor получает `{ client }` без signal.
 
+### Полный mutation lifecycle
+
+```text
+useResourceMutation(...).mutate(input)
+          │
+          ▼
+operation.execute({ scope, input, client })
+          │
+          ▼
+buildData(scope, input)
+          │
+          ▼
+executor(serverFn, { data }, { client })
+          │
+          ▼
+optional transform(response, { scope, input })
+          │
+          ▼
+resource применяет cacheStrategy
+```
+
+Cache strategy выполняется только после успешного `execute`. Если `transform` бросил error, mutation считается failed и strategy не должна применяться.
+
+### Body mapping без mutation input leakage
+
+```ts
+type SaveOrderInput = {
+	localDraftId: string;
+	name: string;
+	amount: number;
+};
+
+buildData: (companyId, input) => ({
+	companyId,
+	order: {
+		name: input.name.trim(),
+		amount: input.amount
+	}
+})
+```
+
+`localDraftId` не уходит на server, если он не является частью transport contract.
+
+### Cache strategy выбирается явно
+
+```ts
+cacheStrategy: createInvalidateResourceScopeCacheStrategy()
+```
+
+или точечный `setQueryData` strategy из `/resource`. Adapter только прикрепляет strategy к operation; выполняет её resource mutation layer.
+
+Без strategy server mutation может успешно завершиться, но cached lists/details останутся stale.
+
 ## Подключение к resource descriptor
 
 ```ts
@@ -134,6 +303,66 @@ const query = useResourceQuery(
 ```
 
 `server-fn` не экспортирует resource hooks повторно. Импортируйте их из `@ryuzaki13/react-foundation-api/resource`.
+
+### Полный descriptor example
+
+```ts
+import {
+	createResourceDescriptor,
+	useResourceMutation,
+	useResourceQuery
+} from "@ryuzaki13/react-foundation-api/resource";
+import {
+	createServerFnMutationOperation,
+	createServerFnQueryOperation
+} from "@ryuzaki13/react-foundation-api/server-fn";
+
+const ordersResource = createResourceDescriptor({
+	namespace: "sales",
+	resource: "orders",
+	operations: {
+		queries: {
+			search: createServerFnQueryOperation({
+				serverFn: loadOrdersServerFn,
+				buildData: (companyId: string, args: { search: string }) => ({
+					companyId,
+					search: args.search
+				}),
+				transform: (response) => response.items.map(mapOrderDto),
+				isEnabled: (scope, args) => Boolean(scope && args.search.trim())
+			})
+		},
+		mutations: {
+			save: createServerFnMutationOperation({
+				serverFn: saveOrderServerFn,
+				buildData: (companyId: string, input: SaveOrderInput) => ({
+					companyId,
+					order: mapSaveOrder(input)
+				}),
+				transform: (response) => mapOrderDto(response.order),
+				cacheStrategy: createInvalidateResourceScopeCacheStrategy()
+			})
+		}
+	}
+});
+
+function Orders({ companyId, search }: { companyId: string; search: string }) {
+	const orders = useResourceQuery(
+		ordersResource,
+		"search",
+		companyId,
+		{ search }
+	);
+
+	const save = useResourceMutation(
+		ordersResource,
+		"save",
+		companyId
+	);
+
+	// render loading/error/data and invoke save.mutate(input)
+}
+```
 
 ## Custom executor
 
@@ -164,6 +393,153 @@ const operation = createServerFnQueryOperation({
 
 Executor получает саму функцию, нормализованный request `{ data }` и `{ client, signal? }`. Он полезен для tracing, тестов и framework adapter-а. Не используйте его для бизнес-логики конкретной entity.
 
+### Default executor
+
+Без option `executor` фактически выполняется:
+
+```ts
+await serverFn({ data });
+```
+
+`client` и `signal` доступны adapter layer, но не добавляются в transport data.
+
+### Tracing executor
+
+```ts
+const tracingExecutor: ServerFnTransportExecutor<Input, Output> = async (
+	serverFn,
+	request,
+	context
+) => {
+	const startedAt = performance.now();
+
+	try {
+		if (context.signal?.aborted) {
+			throw context.signal.reason;
+		}
+
+		return await serverFn(request);
+	} finally {
+		console.debug("serverFn duration", performance.now() - startedAt);
+	}
+};
+```
+
+Не логируйте `request.data` целиком: он может содержать personal/auth-sensitive fields.
+
+### Test executor
+
+Custom executor позволяет проверить request без real framework runtime:
+
+```ts
+const executor = vi.fn(async (_serverFn, request) => ({
+	items: [{ id: request.data.companyId }]
+}));
+
+const operation = createServerFnQueryOperation({
+	serverFn: vi.fn(),
+	buildData: (scope: string, args: { search: string }) => ({
+		companyId: scope,
+		search: args.search
+	}),
+	executor
+});
+```
+
+## Security boundary
+
+Public client type `{ data }` не означает, что data доверена. Server handler обязан повторно выполнить:
+
+- authentication;
+- authorization на scope/entity/action;
+- runtime schema validation;
+- ограничения размера/частоты;
+- sanitization перед DB/HTML/logs;
+- безопасную обработку errors.
+
+```text
+TypeScript type на client ≠ проверенный server input
+```
+
+Не передавайте secrets server-а в `buildData`: этот mapper выполняется на client side operation boundary.
+
+## Query cache и server cache
+
+Resource query key владеет identity client snapshot. ServerFn/framework может дополнительно кэшировать server response, но это другой слой.
+
+После mutation:
+
+- resource cache strategy синхронизирует QueryClient;
+- server-side invalidation управляется framework/backend;
+- одно не заменяет другое.
+
+## Тестирование
+
+### Query operation
+
+```ts
+it("строит { data } и преобразует response", async () => {
+	const serverFn = vi.fn(async ({ data }) => ({
+		items: [{ id: data.companyId }]
+	}));
+
+	const operation = createServerFnQueryOperation({
+		serverFn,
+		buildData: (scope: string, args: { search: string }) => ({
+			companyId: scope,
+			search: args.search
+		}),
+		transform: (response) => response.items
+	});
+
+	const result = await operation.execute({
+		scope: "1000",
+		args: { search: "test" },
+		client: queryClient,
+		signal: new AbortController().signal
+	});
+
+	expect(serverFn).toHaveBeenCalledWith({
+		data: { companyId: "1000", search: "test" }
+	});
+	expect(result).toEqual([{ id: "1000" }]);
+});
+```
+
+Проверяйте:
+
+- buildData получает scope и args/input;
+- serverFn получает ровно `{ data }`;
+- transform context правильный;
+- без transform response возвращается как есть;
+- query executor видит signal;
+- mutation executor не получает signal;
+- errors mapper/executor/transform пробрасываются;
+- cache strategy прикреплена к mutation operation;
+- `isEnabled`, `staleTime`, `gcTime` сохранены в query operation.
+
+## Частые ошибки
+
+### Выполнять serverFn при создании operation
+
+Factory должна получить функцию, а не Promise/result.
+
+### Смешивать transport DTO и domain model
+
+Используйте `buildData` и `transform` как явные boundaries.
+
+### Хранить бизнес-логику в generic executor
+
+Executor — infrastructure wrapper. Entity mapping принадлежит operation/owner entity.
+
+### Ожидать cache update без strategy
+
+Mutation operation сама не угадывает затронутые queries.
+
+### Передавать signal внутрь `{ data }`
+
+AbortSignal не сериализуемый business payload. Используйте executor/framework capability.
+
 ## Типичные ошибки
 
 ### Передавать args напрямую
@@ -181,6 +557,32 @@ Default executor не передаёт signal в функцию, посколь�
 ### Использовать без descriptor-а
 
 Factory возвращает operation, а не готовый React hook. Подключите её к resource/persisted descriptor или вызовите `execute` через корректный orchestration layer.
+
+## FAQ
+
+### Обязательно ли использовать TanStack Start?
+
+Нет. Подходит любая async function с contract `({ data }) => Promise<response>`.
+
+### Где выполняется `buildData`?
+
+На стороне, где выполняется resource operation, обычно в client bundle.
+
+### Передаётся ли QueryClient в serverFn?
+
+Нет. Только custom executor получает QueryClient как infrastructure context.
+
+### Работает ли query cancellation?
+
+Signal доходит до executor. Default serverFn contract его не использует; реальный abort зависит от framework/custom executor.
+
+### Почему mutation не получает signal?
+
+Таков generic `ResourceMutationOperation` contract. Если нужен abort, проектируйте отдельный controlled transport boundary.
+
+### Можно ли вернуть domain model из transform?
+
+Да. Generic result type будет выведен из transform.
 
 ## Полный API
 

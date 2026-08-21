@@ -15,6 +15,19 @@ import { Meta } from "@storybook/addon-docs/blocks";
 
 Обе функции выполняют задачи параллельно. Они не создают web workers и не ускоряют CPU-bound JavaScript: Promise-concurrency полезна прежде всего для I/O — HTTP, чтения storage и других async операций.
 
+### Ментальная модель concurrency
+
+```text
+Параллельно в Promise-смысле:
+request A ───────────────►
+request B ─────────►
+request C ─────────────────────►
+
+JavaScript thread при этом остаётся один.
+```
+
+Пока request ждёт сеть, event loop может продолжить другую задачу. Но три тяжёлых синхронных вычисления всё равно блокируют один thread по очереди.
+
 ## Импорт
 
 ```ts
@@ -115,6 +128,74 @@ TypeScript сужает union по `status`.
 
 Пустой список возвращает успешный пустой результат. `runAsyncTasks` не имеет встроенного concurrency limit и AbortSignal.
 
+### Полные типы task/result
+
+```ts
+type AsyncTask<TResult = unknown> = {
+	readonly name: string;
+	readonly run: () => Promise<TResult>;
+};
+
+type AsyncTaskSuccess<TResult> = {
+	readonly status: "fulfilled";
+	readonly index: number;
+	readonly name: string;
+	readonly data: TResult;
+};
+
+type AsyncTaskFailure = {
+	readonly status: "rejected";
+	readonly index: number;
+	readonly name: string;
+	readonly error: unknown;
+};
+```
+
+Имена не обязаны быть уникальными. Для надёжной identity используйте `index`, если caller допускает повторяющиеся names.
+
+### Синхронный throw внутри `run`
+
+Хотя тип обещает Promise, runtime callback может бросить сразу:
+
+```ts
+{
+	name: "invalid",
+	run: () => {
+		throw new Error("Ошибка до Promise");
+	}
+}
+```
+
+Runner ловит такой throw так же, как rejected Promise, и помещает его в `AsyncTasksError.result.errors`.
+
+### Все задачи действительно стартуют сразу
+
+```ts
+await runAsyncTasks(tenThousandRequests);
+```
+
+создаст попытку запуска всех 10 000 operations. Это может перегрузить browser, backend или connection pool. Для большого массива используйте `runConcurrentTasks`.
+
+### Homogeneous result type
+
+Один вызов использует общий `TResult`. Если задачи возвращают принципиально разные shapes, создайте union/discriminated result либо выполняйте независимые batches:
+
+```ts
+type StartupResult =
+	| { kind: "profile"; value: Profile }
+	| { kind: "settings"; value: Settings };
+```
+
+### Default error message
+
+Если `options.errorMessage` отсутствует:
+
+```text
+Не удалось выполнить все асинхронные задачи.
+```
+
+`AsyncTasksError.name` равен `"AsyncTasksError"`, а `result` содержит полный batch snapshot.
+
 ## `runConcurrentTasks`
 
 ### Ограничение одновременных запросов
@@ -193,6 +274,36 @@ type ConcurrentTaskProgress<TInput, TResult> = {
 
 `percentage` округляется через `Math.round`.
 
+### Точная последовательность callbacks
+
+Для успешной task:
+
+```text
+task resolved
+  → сохранить fulfilled item
+  → увеличить succeeded
+  → onItemSuccess(item)
+  → уменьшить running
+  → увеличить completed
+  → onProgress(progress)
+```
+
+Для rejected task аналогично вызывается `onItemError`, затем `onProgress`.
+
+Callbacks синхронные: runner не `await`-ит Promise, который callback мог случайно вернуть. Делайте их быстрыми state/logging callbacks.
+
+Критически важно не бросать из callbacks. Если `onItemSuccess` бросит, worker попадёт в `catch`, перезапишет item как rejected и вызовет `onItemError`. Если затем бросит `onItemError` или `onProgress`, весь runner может reject. Кроме того, промежуточные progress counters могут стать нелогичными. Оборачивайте необязательную telemetry:
+
+```ts
+onItemSuccess(item) {
+	try {
+		analytics.track("uploaded", { index: item.index });
+	} catch (error) {
+		console.warn("Telemetry недоступна", error);
+	}
+}
+```
+
 ### Abort
 
 ```ts
@@ -218,9 +329,132 @@ const result = await promise;
 
 Abort не является ошибкой runner-а и сам по себе не приводит к `throw`.
 
+### Signal уже aborted до запуска
+
+Для непустого input ни одна task не стартует:
+
+```ts
+const controller = new AbortController();
+controller.abort();
+
+const result = await runConcurrentTasks([1, 2, 3], task, {
+	signal: controller.signal
+});
+```
+
+```ts
+result.aborted; // true
+result.settled; // []
+result.unprocessed; // все три input с индексами
+```
+
+Initial progress event `0%` не генерируется.
+
+### Abort уже начатых tasks
+
+Runner только прекращает выдавать новые inputs workers. Реальная отмена зависит от task:
+
+```ts
+// Signal используется — fetch может прерваться.
+async (url, { signal }) => fetch(url, { signal })
+```
+
+```ts
+// Signal игнорируется — task завершится несмотря на abort batch-а.
+async (url) => fetch(url)
+```
+
+Если task с signal отклоняется AbortError, она попадёт в `errors`, а ещё не стартовавшие inputs — в `unprocessed`.
+
 ### Порядок результата
 
 Tasks могут завершаться в любом порядке, callbacks идут в порядке фактического завершения. Итоговые `settled`, `successes`, `errors` и `unprocessed` собираются по исходным индексам, поэтому результат детерминирован относительно input.
+
+### Полный result
+
+```ts
+type RunConcurrentTasksResult<TInput, TResult> = {
+	settled: ConcurrentTaskSettled<TInput, TResult>[];
+	successes: ConcurrentTaskSuccess<TInput, TResult>[];
+	errors: ConcurrentTaskError<TInput>[];
+	unprocessed: ConcurrentTaskUnprocessed<TInput>[];
+	aborted: boolean;
+	summary: {
+		total: number;
+		completed: number;
+		succeeded: number;
+		failed: number;
+		unprocessed: number;
+	};
+};
+```
+
+Invariant после нормального завершения:
+
+```text
+summary.total = summary.completed + summary.unprocessed
+summary.completed = summary.succeeded + summary.failed
+```
+
+### Пустой input
+
+Возвращается empty result. Если signal уже aborted, `aborted` будет `true`; иначе `false`. `percentage` отсутствует в final summary, а progress callback не вызывается.
+
+## Практический пример: upload batch
+
+```ts
+type UploadInput = {
+	id: string;
+	file: File;
+};
+
+const result = await runConcurrentTasks(
+	files,
+	async ({ id, file }, { signal }) => {
+		const body = new FormData();
+		body.set("file", file);
+
+		const response = await fetch(`/api/files/${encodeURIComponent(id)}`, {
+			method: "PUT",
+			body,
+			signal
+		});
+
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status}`);
+		}
+
+		return { id, uploaded: true };
+	},
+	{
+		concurrency: 3,
+		signal: controller.signal,
+		onProgress: ({ completed, total, percentage }) => {
+			console.log(`${completed}/${total}: ${percentage}%`);
+		}
+	}
+);
+```
+
+### Retry только failures
+
+```ts
+const retryInputs = result.errors.map((item) => item.input);
+
+const retryResult = await runConcurrentTasks(retryInputs, uploadTask, {
+	concurrency: 2
+});
+```
+
+У write operations retry безопасен только при idempotent server contract. Потерянный response не доказывает, что первая запись не произошла.
+
+### Продолжить unprocessed после abort
+
+```ts
+const remainingInputs = result.unprocessed.map((item) => item.input);
+```
+
+Не добавляйте автоматически `errors` к `unprocessed`: rejected task уже запускалась и могла частично изменить backend.
 
 ## `ConcurrencyPartialError`
 
@@ -236,6 +470,125 @@ if (result.errors.length > 0 || result.aborted) {
 
 Не путайте его с `AsyncTasksError`: первый создаёт consumer по своей policy, второй автоматически бросает `runAsyncTasks`.
 
+`ConcurrencyPartialError.name` равен `"ConcurrencyPartialError"`, field `result` сохраняет переданный snapshot без преобразований.
+
+```ts
+try {
+	const result = await runConcurrentTasks(inputs, task);
+
+	if (result.errors.length || result.aborted) {
+		throw new ConcurrencyPartialError(
+			"Не все файлы обработаны",
+			result
+		);
+	}
+} catch (error) {
+	if (error instanceof ConcurrencyPartialError) {
+		showPartialResult(error.result);
+		return;
+	}
+
+	throw error;
+}
+```
+
+## Выбор `concurrency`
+
+Нет универсального максимума:
+
+| Тип работы | Стартовая оценка |
+| --- | --- |
+| Тяжёлые SAP write requests | 2–4 |
+| Небольшие independent reads | 4–8 |
+| Local async storage | зависит от adapter-а |
+| CPU-bound parsing | runner не решает задачу |
+
+Начните с малого значения, измерьте latency/error rate и согласуйте лимит с backend.
+
+`concurrency: 1` полезен для последовательной обработки независимых элементов с единым result contract. Но если шаг B зависит от output A, обычный последовательный workflow будет понятнее.
+
+## Тестирование
+
+### `runAsyncTasks`
+
+```ts
+it("сохраняет partial result в AsyncTasksError", async () => {
+	const promise = runAsyncTasks([
+		{ name: "ok", run: async () => 1 },
+		{ name: "failed", run: async () => { throw new Error("boom"); } }
+	]);
+
+	await expect(promise).rejects.toMatchObject({
+		name: "AsyncTasksError",
+		result: {
+			summary: { total: 2, succeeded: 1, failed: 1 }
+		}
+	});
+});
+```
+
+### Проверка лимита concurrency
+
+```ts
+it("не запускает больше двух tasks одновременно", async () => {
+	let running = 0;
+	let maximum = 0;
+
+	await runConcurrentTasks(
+		[1, 2, 3, 4],
+		async () => {
+			running += 1;
+			maximum = Math.max(maximum, running);
+			await Promise.resolve();
+			running -= 1;
+			return true;
+		},
+		{ concurrency: 2 }
+	);
+
+	expect(maximum).toBe(2);
+});
+```
+
+Покройте:
+
+- empty input;
+- validation `concurrency`;
+- sync throw и rejected Promise;
+- input order result-а;
+- completion order callbacks;
+- abort до старта;
+- abort во время работы;
+- task, игнорирующую signal;
+- unprocessed indices;
+- custom partial-error policy.
+
+## Частые ошибки
+
+### Использовать `runAsyncTasks` для тысяч requests
+
+Он стартует всё сразу. Нужен bounded runner.
+
+### Считать abort мгновенной отменой
+
+Task обязана использовать signal.
+
+### Бросать из progress callback
+
+Callbacks являются частью worker execution и могут сломать batch.
+
+### Считать individual errors исключением bounded runner-а
+
+Читайте `result.errors`. Сам runner их не бросает.
+
+### Мутировать input
+
+Result сохраняет ссылку на исходный input. Mutation может неожиданно изменить UI/result history.
+
+### Использовать batch как Query cache
+
+Runner orchestrates promises, но не заменяет query identity, stale policy и cache ownership.
+
 ## Практические рекомендации
 
 - Не ставьте слишком большой concurrency: browser, proxy и backend имеют свои лимиты.
@@ -244,6 +597,28 @@ if (result.errors.length > 0 || result.aborted) {
 - Обрабатывайте `unknown` error через безопасный normalizer.
 - Не используйте runner вместо TanStack Query cache для одного и того же resource.
 - Если задача зависит от результата предыдущей, это не независимый batch: выполните зависимые шаги последовательно.
+
+## FAQ
+
+### Сохраняется ли порядок?
+
+В final arrays — да, по input index. В callbacks — нет, они идут по завершению.
+
+### Останавливается ли batch на первой task error?
+
+Нет. Оба runner-а дают уже запущенным tasks завершиться. `runAsyncTasks` бросает aggregated error после всего batch, bounded runner возвращает errors.
+
+### Можно ли менять concurrency во время запуска?
+
+Нет. Значение фиксируется при старте.
+
+### Есть ли automatic retry?
+
+Нет. Он должен быть явным и безопасным для operation.
+
+### Почему `error` имеет type `unknown`?
+
+Promise может reject любым JS value. Сужайте/нормализуйте его перед UI/logging.
 
 ## Полный API
 

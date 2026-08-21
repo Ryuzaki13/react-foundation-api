@@ -25,6 +25,54 @@ import { Meta } from "@storybook/addon-docs/blocks";
 
 Для стандартной модели сохранённых записей `list/latest/history/save/create/delete` удобнее [`/persisted`](../persisted/README.mdx).
 
+Не используйте `/resource`, если нужен один приватный request в одной feature и descriptor не даёт повторного использования. Абстракция полезна, когда resource имеет устойчивое имя, несколько consumers/operations и общую cache policy.
+
+## Ментальная модель
+
+```text
+Descriptor
+├── namespace + resource ───────────────► base query key
+├── scope policy ───────────────────────► можно ли выполнять operation
+├── query operations
+│   ├── search(args) ───────────────────► Promise<SearchResult>
+│   └── detail(args) ───────────────────► Promise<Order>
+└── mutation operations
+    ├── save(input) ────────────────────► Promise<Order>
+    └── archive(input) ─────────────────► Promise<void>
+                                            │
+                                            ▼
+                                      cache strategy
+```
+
+Descriptor не хранит данные. Данные хранятся в QueryClient по keys descriptor-а.
+
+### Что является identity
+
+Для query:
+
+```text
+namespace + resource + normalized scope + operation name + normalized args
+```
+
+Для mutation key:
+
+```text
+namespace + resource + normalized scope + operation name
+```
+
+Mutation input в key не входит. Он передаётся `mutationFn` в момент `mutate(input)`.
+
+### Query cache — server snapshot
+
+Query data — копия последнего известного server state. Не редактируйте её как form draft:
+
+```ts
+// Нельзя: in-place mutation cache object.
+query.data.title = draftTitle;
+```
+
+Draft формы должен быть отдельным state. После save cache synchronizes через strategy.
+
 ## Установка и provider
 
 ```bash
@@ -137,6 +185,52 @@ const saveOperation = createResourceMutationOperation<
 
 Factories `createResourceQueryOperation` и `createResourceMutationOperation` не изменяют объект. Они помогают TypeScript сохранить generic types.
 
+Они также не добавляют retry, validation, transport headers или cache behavior. Всё перечисленное должно быть явно в operation/adapter/QueryClient policy.
+
+### Query operation contract
+
+```ts
+interface ResourceQueryOperation<TScope, TArgs, TResult> {
+	execute(context: {
+		scope: TScope;
+		args: TArgs;
+		client: QueryClient;
+		signal?: AbortSignal;
+	}): Promise<TResult>;
+	isEnabled?(scope: TScope | null | undefined, args: TArgs): boolean;
+	readonly staleTime?: number;
+	readonly gcTime?: number;
+}
+```
+
+`client` позволяет operation переиспользовать другие query snapshots или metadata. Не создавайте новый QueryClient внутри execute.
+
+`signal` нужно передавать transport-у:
+
+```ts
+const response = await fetch(url, { signal });
+```
+
+### Mutation operation contract
+
+```ts
+interface ResourceMutationOperation<TScope, TInput, TResult, TDescriptor> {
+	execute(context: {
+		scope: TScope;
+		input: TInput;
+		client: QueryClient;
+	}): Promise<TResult>;
+	readonly cacheStrategy?: ResourceCacheStrategy<
+		TScope,
+		TInput,
+		TResult,
+		TDescriptor
+	>;
+}
+```
+
+Generic mutation contract не содержит AbortSignal. Не обещайте automatic cancellation mutation.
+
 ### 3. Создать descriptor
 
 ```ts
@@ -158,6 +252,42 @@ const ordersResource = createResourceDescriptor({
 `namespace + resource` должны быть устойчивыми и уникальными. Не включайте локализованные labels или случайные значения.
 
 `normalizeScope` влияет только на query key. В `execute` приходит исходный literal scope. Например, key получит trimmed `companyId`, но operation увидит строку ровно в переданном object. Это позволяет нормализовать identity, не переписывая draft/input.
+
+### Поля descriptor-а
+
+| Поле | Назначение |
+| --- | --- |
+| `namespace` | Верхний технический namespace keys, например `sales` |
+| `resource` | Устойчивое имя resource, например `orders` |
+| `operations.queries` | Record read operations с произвольными names |
+| `operations.mutations` | Record write operations |
+| `keys` | Custom key factory или generated factory |
+| `normalizeScope` | Настройка generated key factory |
+| `isEnabled` | Общая доступность resource scope |
+| `getScopeError` | Error message для фактического execute invalid scope |
+
+Operations можно опустить с одной стороны:
+
+```ts
+createResourceDescriptor({
+	namespace: "catalog",
+	resource: "countries",
+	operations: {
+		queries: { list: listCountriesOperation }
+	}
+});
+```
+
+В runtime отсутствующая группа превращается в пустой object.
+
+### Descriptor создаётся один раз
+
+```ts
+// На уровне module — правильно.
+export const ordersResource = createResourceDescriptor(...);
+```
+
+Не создавайте его внутри component render: descriptor и callbacks должны иметь устойчивую identity, а module-level definition проще тестировать и переиспользовать.
 
 ### 4. Использовать query hook
 
@@ -198,6 +328,14 @@ mutation.mutate({ id: "42", title: "Новый заголовок" });
 
 Mutation key содержит resource/scope/operation, но не input. Input передаётся только в `mutationFn`.
 
+### Несколько одновременных mutations
+
+Две `save` mutations одного scope имеют одинаковый mutation key, но разные inputs и отдельные mutation instances. Mutation key группирует operations для наблюдения/diagnostics; это не Query cache slot с data.
+
+### Scope проверяется при `mutate`
+
+Hook можно создать с nullable scope, но actual mutation вызовет `assertResourceScope`. Если scope invalid, server execute не начнётся и mutation получит error.
+
 ## Query lifecycle
 
 `buildResourceQueryOptions(descriptor, name, scope, args)` создаёт TanStack `queryOptions`:
@@ -220,6 +358,54 @@ const options = buildResourceQueryOptions(
 
 Перед фактическим `execute` scope обязан быть не `null`/`undefined` и пройти descriptor policy. Иначе выбрасывается `getScopeError` или стандартная ошибка.
 
+### Критическое правило nullable scope
+
+Если scope может быть `null`/`undefined`, descriptor обязан иметь `isEnabled`:
+
+```ts
+isEnabled: (scope) => Boolean(scope?.companyId)
+```
+
+Без него default enabled равен `true`, даже для `undefined`. TanStack Query попытается запустить query, а query function выбросит scope error.
+
+Operation-level `isEnabled` не заменяет общую scope policy, хотя тоже может проверить scope. Хорошая структура:
+
+```ts
+isEnabled: (scope) => Boolean(scope?.companyId),
+
+// В operation:
+isEnabled: (_scope, args) => args.limit > 0 && args.search.length >= 2
+```
+
+### Стандартная scope error
+
+Если custom `getScopeError` отсутствует:
+
+```text
+Недостаточно данных scope для ресурса 'orders'.
+```
+
+`getScopeError` вызывается только при попытке actual execution invalid scope. Возвращаемое `null` приводит к standard fallback из-за `??`.
+
+### Отсутствующая operation
+
+При неверном runtime descriptor-е error возникает до transport:
+
+```text
+Ресурс 'orders' не поддерживает read-операцию 'detail'.
+```
+
+Runtime guard проверяет object и callable `execute`. TypeScript обычно ловит неверное name раньше, если descriptor types сохранены.
+
+### `staleTime` и `gcTime`
+
+Значения просто передаются TanStack Query:
+
+- `staleTime` не является HTTP TTL;
+- `gcTime` отсчитывается для неактивного query;
+- отсутствие значения означает default QueryClient policy;
+- они не влияют на mutation.
+
 ## Императивная загрузка
 
 ```ts
@@ -233,6 +419,28 @@ const orders = await getResourceQueryData(
 ```
 
 Функция использует `queryClient.fetchQuery`, поэтому переиспользует query cache. Передавайте только валидный scope: imperative `fetchQuery` нельзя воспринимать как disabled React observer; query function всё равно защищает scope и может бросить ошибку.
+
+### Loader/preload
+
+```ts
+export async function loadOrdersRoute({
+	companyId,
+	queryClient
+}: {
+	companyId: string;
+	queryClient: QueryClient;
+}) {
+	return getResourceQueryData(
+		ordersResource,
+		"search",
+		{ companyId },
+		{ search: "", limit: 50 },
+		queryClient
+	);
+}
+```
+
+Component с теми же exact inputs получит тот же query key и переиспользует snapshot.
 
 ## Query keys
 
@@ -279,6 +487,57 @@ normalizeResourceKeyValue({ b: " x ", a: undefined });
 - function/symbol/bigint превращаются в строки и могут collision-иться.
 
 Нормализуйте специальные значения сами, например Date → ISO string. Query key не должен содержать secrets, DOM nodes или огромные payload.
+
+### Дополнительные примеры normalization
+
+```ts
+normalizeResourceKeyValue(undefined);
+// null
+
+normalizeResourceKeyValue([" a ", undefined, false]);
+// ["a", null, false]
+
+normalizeResourceKeyValue({ z: 1, a: { b: " x " } });
+// { a: { b: "x" }, z: 1 }
+
+normalizeResourceKeyValue(new Date("2026-08-21T00:00:00Z"));
+// {} — Date не поддерживается специально
+```
+
+### Object key order
+
+Эти scopes создадут одинаковую normalized identity:
+
+```ts
+{ companyId: "1000", plant: "1100" }
+{ plant: "1100", companyId: "1000" }
+```
+
+Object keys сортируются рекурсивно. Array order при этом значим:
+
+```ts
+["1000", "2000"] !== ["2000", "1000"]
+```
+
+Если array представляет set, отсортируйте его в `normalizeScope`/до args.
+
+### Custom keys
+
+Можно передать полностью свою `ResourceKeys`, например для совместимости с существующей cache taxonomy. Factory обязана сохранять prefix semantics:
+
+```ts
+const keys = createResourceKeys<OrdersScope, "search" | "save">({
+	namespace: "sales-v2",
+	resource: "orders"
+});
+
+createResourceDescriptor({
+	// ...
+	keys
+});
+```
+
+Не собирайте key ad hoc в cache strategy: используйте `descriptor.keys`.
 
 ## Cache strategies после mutation
 
@@ -336,6 +595,183 @@ useResourceMutation(descriptor, "save", scope, {
 
 `applyResourceCacheStrategy(strategy, context)` — низкоуровневый helper для ручного применения optional strategy.
 
+### Полный cache context
+
+```ts
+interface ResourceCacheStrategyContext<TScope, TInput, TResult, TDescriptor> {
+	readonly client: QueryClient;
+	readonly descriptor: TDescriptor;
+	readonly scope: TScope;
+	readonly input: TInput;
+	readonly result: TResult;
+}
+```
+
+Strategy имеет все данные для точного key/update, но не должна содержать domain network side effects. Server write уже завершён.
+
+### Порядок mutation success
+
+```text
+operation.execute success
+        │
+        ▼
+resolved scope повторно проверяется
+        │
+        ▼
+selected cache strategy
+        │ await
+        ▼
+hook options.onSuccess(result, input)
+```
+
+`options.cacheStrategy` выбирается так:
+
+| Значение | Поведение |
+| --- | --- |
+| `undefined` | Использовать strategy operation |
+| `null` | Не выполнять strategy |
+| object | Полностью заменить operation strategy |
+
+### Invalidate или set data
+
+Используйте invalidation, если server:
+
+- вычисляет дополнительные fields;
+- меняет сортировку/агрегации;
+- write затрагивает несколько неизвестных queries.
+
+Используйте `setQueryData`, если response содержит authoritative готовую запись и точный key известен.
+
+Композиция полезна, когда detail можно обновить сразу, а lists безопаснее refetch-нуть.
+
+### Current data может быть `undefined`
+
+Updater обязан это учесть:
+
+```ts
+update: (current, { result }) => {
+	if (!current) return [result];
+	return current.map((item) => item.id === result.id ? result : item);
+}
+```
+
+Возвращайте новое значение. Не делайте `current.push(...)`.
+
+### Ошибка cache strategy после server success
+
+Server mutation уже могла примениться. Если strategy бросила error:
+
+- следующие composed strategies не выполняются;
+- hook custom `onSuccess` не вызывается;
+- caller может получить rejected async lifecycle.
+
+Не повторяйте write автоматически только из-за cache error: это может создать duplicate. Разделяйте retry server operation и cache recovery.
+
+## Transport adapters
+
+Generic operation может использовать:
+
+- `/http` для обычного REST;
+- `/odata` для metadata-aware SAP operation;
+- `/server-fn` для функций `{ data }`;
+- тестовый in-memory executor.
+
+Resource не должен знать бизнес transport автоматически. Это позволяет одному descriptor pattern работать с разными infrastructures без смешивания contracts.
+
+## Тестирование
+
+### Key factory
+
+```ts
+it("нормализует scope и args", () => {
+	const key = ordersResource.keys.operation(
+		"search",
+		{ companyId: " 1000 " },
+		{ limit: 50, search: " test " }
+	);
+
+	expect(key).toEqual([
+		"sales",
+		"orders",
+		{ companyId: "1000" },
+		"search",
+		{ limit: 50, search: "test" }
+	]);
+});
+```
+
+### Query operation context
+
+```ts
+it("передаёт scope, args, client и signal", async () => {
+	const execute = vi.fn().mockResolvedValue([]);
+	const operation = createResourceQueryOperation({ execute });
+	const descriptor = createResourceDescriptor({
+		namespace: "test",
+		resource: "orders",
+		operations: { queries: { list: operation } },
+		isEnabled: (scope) => Boolean(scope)
+	});
+
+	await queryClient.fetchQuery(
+		buildResourceQueryOptions(descriptor, "list", "scope-1", {})
+	);
+
+	expect(execute).toHaveBeenCalledWith(
+		expect.objectContaining({
+			scope: "scope-1",
+			args: {},
+			client: queryClient,
+			signal: expect.any(AbortSignal)
+		})
+	);
+});
+```
+
+Покройте:
+
+- nullable/invalid scope disabled;
+- custom scope error при imperative execution;
+- descriptor + operation enabled policies;
+- missing operation runtime error;
+- same normalized inputs → same key;
+- meaningful inputs → different keys;
+- signal передаётся query transport;
+- mutation success strategy order;
+- `undefined`/`null`/override strategy semantics;
+- setQueryData не мутирует old snapshot;
+- composed strategy прекращается на error.
+
+## Частые ошибки
+
+### Descriptor без `isEnabled` при nullable scope
+
+Query будет enabled и затем упадёт на scope assertion.
+
+### Date прямо в args
+
+Default normalizer превратит Date в `{}`. Передавайте ISO string.
+
+### Нормализовать scope и ожидать изменённый execute input
+
+`normalizeScope` меняет только key identity.
+
+### Не включить args, влияющие на response
+
+Factory включает переданный args целиком. Не прячьте server filter во внешнем closure, отсутствующем в args/key.
+
+### Создавать descriptor в render
+
+Держите его на module boundary.
+
+### Повторить mutation после cache error
+
+Server write уже мог завершиться. Восстановите cache отдельно.
+
+### Deep import operation type
+
+Используйте public subpath `/resource`.
+
 ## Ошибки и границы
 
 - Отсутствующая operation даёт раннюю ошибку с именем resource/operation.
@@ -345,6 +781,32 @@ useResourceMutation(descriptor, "save", scope, {
 - Args/scope должны быть сериализуемыми и описывать все данные, влияющие на query result.
 - Не используйте query cache как authoritative persistent storage.
 - Cache strategy выполняется только после успешной mutation.
+
+## FAQ
+
+### Resource сам выполняет HTTP?
+
+Нет. Transport находится в `operation.execute` или adapter factory.
+
+### Может ли scope быть primitive?
+
+Да: string/number и другие типы разрешены generic-ом. Он должен устойчиво описывать tenant/user/entity boundary.
+
+### Почему args входят в query key автоматически?
+
+Потому что разные args обычно означают разные server snapshots.
+
+### Почему mutation input не входит в mutation key?
+
+Mutation key описывает семейство operation, а конкретный input хранится в mutation instance execution state.
+
+### Как отключить operation cache strategy для одного hook?
+
+Передать `cacheStrategy: null`.
+
+### Можно ли использовать без React hook?
+
+Queries — через `getResourceQueryData`/`buildResourceQueryOptions`. Для mutations public convenience API сейчас hook-oriented; operation можно orchestrate на корректной owner boundary.
 
 ## Полный API
 
