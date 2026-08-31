@@ -4,13 +4,7 @@ import { Meta } from "@storybook/addon-docs/blocks";
 
 # `@ryuzaki13/react-foundation-api`
 
-Пакет соединяет приложение с внешними API. Он содержит transport, интеграцию с TanStack Query, SAP/OData V2 infrastructure и небольшие orchestration helpers. Документ рассчитан на разработчика, который видит только опубликованный пакет и его типы.
-
-## Подключение
-
-```bash
-npm install @ryuzaki13/react-foundation-api @ryuzaki13/react-foundation-lib
-```
+Пакет соединяет приложение с внешними API. Он содержит transport, интеграцию с TanStack Query, SAP/OData V2 infrastructure и небольшие orchestration helpers.
 
 Корневого импорта нет. Всегда указывайте точный subpath:
 
@@ -34,7 +28,7 @@ host application: entities / features / widgets / pages
        pure helpers + metadata + query policies
 ```
 
-`foundation-api` не должен знать конкретную бизнес-сущность, экран или UI-компонент. DTO/domain mapping конкретного проекта остаётся у host-приложения. UI primitives находятся в `@ryuzaki13/react-foundation-ui`.
+`foundation-api` не знает конкретную бизнес-сущность, экран или UI-компонент. DTO/domain mapping конкретного проекта остаётся у host-приложения.
 
 ## Как выбрать entrypoint
 
