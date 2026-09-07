@@ -36,6 +36,7 @@ import { odataQueryFn } from "@ryuzaki13/react-foundation-api";
 | `resource` | Произвольный transport-agnostic ресурс поверх TanStack Query | [Resource](./src/resource/README.mdx) |
 | `server-fn` | Адаптировать функцию контракта `{ data }` к resource/persisted operation | [Server Function](./src/server-fn/README.mdx) |
 | `transport` | Получить workbench/customizing transport requests пользователя SAP | [SAP Transport Requests](./src/transport/README.mdx) |
+| `websocket` | Управлять WebSocket lifecycle и проверять Origin upgrade-запроса | [WebSocket](./src/websocket/README.mdx) |
 
 Общая карта пакета, границы ответственности и схема выбора entrypoint находятся на странице [Foundation API: обзор](./src/foundationApi.mdx).
 

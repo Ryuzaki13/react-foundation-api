@@ -21,7 +21,8 @@
 		"odata",
 		"tanstack-query",
 		"vite",
-		"esm"
+		"esm",
+		"websocket"
 	],
 	"packageManager": "npm@11.7.0",
 	"type": "module",
@@ -70,6 +71,10 @@
 			"types": "./dist/transport/index.d.ts",
 			"import": "./dist/transport/index.js"
 		},
+		"./websocket": {
+			"types": "./dist/websocket/index.d.ts",
+			"import": "./dist/websocket/index.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"scripts": {
@@ -94,7 +99,7 @@
 		"react": ">=19.0.0 <20.0.0"
 	},
 	"devDependencies": {
-		"@ryuzaki13/react-foundation-lib": "^1.4.4",
+		"@ryuzaki13/react-foundation-lib": "^1.6.0",
 		"@tanstack/query-broadcast-client-experimental": "^5.101.4",
 		"@tanstack/query-persist-client-core": "^5.101.4",
 		"@tanstack/react-query": "^5.101.4",

@@ -1,0 +1,50 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Foundation API/WebSocket" />
+
+# WebSocket transport через `@ryuzaki13/react-foundation-api/websocket`
+
+Entrypoint содержит только предметно-независимый transport lifecycle:
+
+- один активный socket;
+- bounded exponential reconnect с jitter;
+- наблюдаемый connection snapshot;
+- проверку браузерного `Origin` на серверном upgrade boundary.
+
+Доменный event envelope, авторизация, подписки, replay/resync и обновление TanStack Query принадлежат host-приложению.
+
+## Управляемое соединение
+
+```ts
+import { createManagedWebSocket } from "@ryuzaki13/react-foundation-api/websocket";
+
+const connection = createManagedWebSocket({
+	url: () => new URL("/ws/events", window.location.href).href.replace(/^http/, "ws"),
+	onMessage(event) {
+		console.log(event.data);
+	}
+});
+
+const unsubscribe = connection.subscribe(() => {
+	console.log(connection.getSnapshot());
+});
+
+connection.connect();
+connection.stop();
+unsubscribe();
+```
+
+`send` возвращает `false`, если socket ещё не открыт. Normal close `1000` и policy violation `1008` по умолчанию не запускают reconnect; это можно переопределить через `reconnect.shouldReconnect`.
+
+В SSR `WebSocket` обычно отсутствует. Создавайте соединение только в браузерном lifecycle либо передайте совместимый `socketFactory`.
+
+## Origin policy на upgrade
+
+```ts
+import { evaluateWebSocketRequestOrigin } from "@ryuzaki13/react-foundation-api/websocket";
+
+const decision = evaluateWebSocketRequestOrigin(request);
+if (!decision.allowed) return new Response("Forbidden", { status: 403 });
+```
+
+По умолчанию обязателен `Origin`, равный origin request URL. За reverse proxy следует сохранять внешний `Host` и protocol; альтернативные origins передаются только явным allowlist. `allowMissingOrigin` предназначен для отдельно доверенных non-browser clients и по умолчанию выключен.

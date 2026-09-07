@@ -43,6 +43,7 @@ host application: entities / features / widgets / pages
 | Прочитать ADT transport XML | `adt` | Endpoint `/sap/bc/adt`, XML |
 | Прочитать UI2 workbench/customizing requests | `transport` | Это SAP transport requests, а не generic HTTP transport |
 | Отправить error-report draft | `error-report` | Сбор/хранение draft принадлежит `foundation-lib` |
+| Подключить WebSocket с reconnect или проверить Origin handshake | `websocket` | Не содержит доменный event protocol и серверную авторизацию |
 
 ## Самая частая ошибка: одинаковые слова, разные уровни
 
@@ -90,6 +91,8 @@ export function App() {
 | React hooks | Да | Только в поддерживаемом React runtime/provider |
 | OData SSO recovery | Да | Нет: использует `window`, `document`, iframe |
 | SAP transport fetchers | Да | Только при корректном fetch/proxy/cookie окружении |
+| `websocket` Origin policy | Да | Да |
+| `createManagedWebSocket` | Да | Только с переданной server-compatible socket factory |
 
 OData transport использует compile-time constants и проектный adapter. Host-сборка должна предоставлять ожидаемую конфигурацию; подробности приведены на странице OData.
 
@@ -110,7 +113,7 @@ bust=24h;name=ref
 
 | Область | Документы |
 | --- | --- |
-| Transport | [HTTP](./http/README.mdx), [OData](./odata/README.mdx), [ADT](./adt/README.mdx), [SAP Transport Requests](./transport/README.mdx) |
+| Transport | [HTTP](./http/README.mdx), [OData](./odata/README.mdx), [ADT](./adt/README.mdx), [SAP Transport Requests](./transport/README.mdx), [WebSocket](./websocket/README.mdx) |
 | Query infrastructure | [Resource](./resource/README.mdx), [Persisted](./persisted/README.mdx), [Server Function](./server-fn/README.mdx) |
 | Orchestration и diagnostics | [Async](./async/README.mdx), [Error Report](./error-report/README.mdx) |
 

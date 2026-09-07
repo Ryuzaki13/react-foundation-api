@@ -60,7 +60,8 @@ export default defineConfig((configEnv) => ({
 				"persisted/index": resolve("src/persisted/index.ts"),
 				"resource/index": resolve("src/resource/index.ts"),
 				"server-fn/index": resolve("src/server-fn/index.ts"),
-				"transport/index": resolve("src/transport/index.ts")
+				"transport/index": resolve("src/transport/index.ts"),
+				"websocket/index": resolve("src/websocket/index.ts")
 			},
 			formats: ["es"]
 		},
