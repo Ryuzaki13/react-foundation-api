@@ -157,9 +157,10 @@ describe("fetchBase", () => {
 
 	it("публикует транспортный отчет для HTML-ответа без SSO-формы", async () => {
 		const reporter = vi.fn();
+		const html = "<html><head><title>Gateway error</title></head><body><h1>Proxy returned login page</h1></body></html>";
 		setErrorReportTransportErrorReporter(reporter);
 		global.fetch = vi.fn().mockResolvedValue(
-			new Response("<html><head><title>Gateway error</title></head><body><h1>Proxy returned login page</h1></body></html>", {
+			new Response(html, {
 				status: 200,
 				headers: {
 					"Content-Type": "text/html; charset=utf-8"
@@ -182,12 +183,10 @@ describe("fetchBase", () => {
 				baseUrlType: "config",
 				status: 200,
 				contentType: "text/html; charset=utf-8",
-				html: expect.objectContaining({
-					title: "Gateway error",
-					formCount: 0,
-					textPreview: expect.stringContaining("Proxy returned login page")
-				})
+				html: { length: html.length, formCount: 0, inputNames: [] }
 			})
 		);
+		expect(JSON.stringify(reporter.mock.calls)).not.toContain("Gateway error");
+		expect(JSON.stringify(reporter.mock.calls)).not.toContain("Proxy returned login page");
 	});
 });

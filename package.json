@@ -92,14 +92,14 @@
 		"registry": "https://registry.npmjs.org/"
 	},
 	"peerDependencies": {
-		"@ryuzaki13/react-foundation-lib": ">=1.4.0 <2.0.0",
+		"@ryuzaki13/react-foundation-lib": ">=2.0.0 <3.0.0",
 		"@tanstack/react-query": ">=5.0.0 <6.0.0",
 		"@tanstack/react-table": ">=9.1.0 <10.0.0",
 		"fast-xml-parser": ">=5.0.0 <6.0.0",
 		"react": ">=19.0.0 <20.0.0"
 	},
 	"devDependencies": {
-		"@ryuzaki13/react-foundation-lib": "^1.6.0",
+		"@ryuzaki13/react-foundation-lib": "^2.0.0",
 		"@tanstack/query-broadcast-client-experimental": "^5.101.4",
 		"@tanstack/query-persist-client-core": "^5.101.4",
 		"@tanstack/react-query": "^5.101.4",
@@ -113,6 +113,7 @@
 		"eslint-plugin-prettier": "^5.5.6",
 		"eslint-plugin-react-hooks": "^7.1.1",
 		"eslint-plugin-react-refresh": "^0.5.3",
+		"fake-indexeddb": "^6.2.5",
 		"fast-xml-parser": "^5.10.1",
 		"globals": "^17.8.0",
 		"immer": "^11.1.15",

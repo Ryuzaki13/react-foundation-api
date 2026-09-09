@@ -1,11 +1,9 @@
 import { reportTransportError } from "@ryuzaki13/react-foundation-lib/error-report";
-import { truncateText } from "@ryuzaki13/react-foundation-lib/formatters";
 
-import { FetchErrorReportContext } from "./types";
+import { type FetchErrorReportContext } from "./types";
 import { BaseUrlMap, getInputUrl, normalizeRelativePath } from "./url";
 
 const MAX_HTML_INPUT_NAMES = 40;
-const MAX_HTML_PREVIEW_LENGTH = 1000;
 
 function normalizeUrlForReport(url: string) {
 	try {
@@ -26,13 +24,6 @@ function readHtmlDocument(html: string) {
 	} catch {
 		return undefined;
 	}
-}
-
-function extractHtmlTitle(html: string, doc: Document | undefined) {
-	const title = doc?.querySelector("title")?.textContent;
-	if (title) return title;
-
-	return /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1];
 }
 
 function countHtmlForms(html: string, doc: Document | undefined) {
@@ -56,25 +47,13 @@ function collectHtmlInputNames(html: string, doc: Document | undefined) {
 	return Array.from(new Set(names)).slice(0, MAX_HTML_INPUT_NAMES);
 }
 
-function extractHtmlTextPreview(html: string, doc: Document | undefined) {
-	const text =
-		doc?.body?.textContent ??
-		html
-			.replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-			.replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-			.replace(/<[^>]+>/g, " ");
-	return truncateText(text, MAX_HTML_PREVIEW_LENGTH);
-}
-
 function createHtmlResponseSummary(html: string) {
 	const doc = readHtmlDocument(html);
 
 	return {
 		length: html.length,
-		title: truncateText(extractHtmlTitle(html, doc), 200),
 		formCount: countHtmlForms(html, doc),
-		inputNames: collectHtmlInputNames(html, doc),
-		textPreview: extractHtmlTextPreview(html, doc)
+		inputNames: collectHtmlInputNames(html, doc)
 	};
 }
 
