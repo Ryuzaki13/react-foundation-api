@@ -47,6 +47,10 @@
 			"types": "./dist/error-report/index.d.ts",
 			"import": "./dist/error-report/index.js"
 		},
+		"./error-report-server": {
+			"types": "./dist/error-report-server/index.d.ts",
+			"import": "./dist/error-report-server/index.js"
+		},
 		"./http": {
 			"types": "./dist/http/index.d.ts",
 			"import": "./dist/http/index.js"

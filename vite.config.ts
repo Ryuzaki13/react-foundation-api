@@ -22,7 +22,7 @@ if (missingPeerDevDependencies.length > 0) {
 }
 
 function isExternalPackage(id: string): boolean {
-	return externalPackages.some((packageName) => id === packageName || id.startsWith(`${packageName}/`));
+	return id.startsWith("node:") || externalPackages.some((packageName) => id === packageName || id.startsWith(`${packageName}/`));
 }
 
 function createDefine(configEnv: { mode: string }): Record<string, string> {
@@ -55,6 +55,7 @@ export default defineConfig((configEnv) => ({
 				"adt/index": resolve("src/adt/index.ts"),
 				"async/index": resolve("src/async/index.ts"),
 				"error-report/index": resolve("src/error-report/index.ts"),
+				"error-report-server/index": resolve("src/error-report-server/index.ts"),
 				"http/index": resolve("src/http/index.ts"),
 				"odata/index": resolve("src/odata/index.ts"),
 				"persisted/index": resolve("src/persisted/index.ts"),
