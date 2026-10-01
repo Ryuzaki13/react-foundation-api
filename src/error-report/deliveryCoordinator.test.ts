@@ -1,6 +1,6 @@
 import { createErrorReportQueue, ERROR_REPORT_QUEUE_LEASE_MS, type ErrorReportPayload } from "@ryuzaki13/react-foundation-lib/error-report";
 import { indexedDB } from "fake-indexeddb";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createErrorReportDeliveryCoordinator } from "./deliveryCoordinator";
 import { ErrorReportDeliveryHttpError } from "./deliveryFailure";
@@ -29,6 +29,15 @@ function createQueue() {
 }
 
 describe("createErrorReportDeliveryCoordinator", () => {
+	beforeEach(() => {
+		// Очередь проверяет TTL по Date.now(); закрепляем его за датой тестовых записей.
+		vi.spyOn(Date, "now").mockReturnValue(INITIAL_NOW.getTime());
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it("подтверждает успешную доставку и удаляет queue record", async () => {
 		const queue = createQueue();
 		const adapter = vi.fn().mockResolvedValue(undefined);

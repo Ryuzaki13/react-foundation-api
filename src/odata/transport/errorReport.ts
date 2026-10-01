@@ -4,6 +4,19 @@ import { type FetchErrorReportContext } from "./types";
 import { BaseUrlMap, getInputUrl, normalizeRelativePath } from "./url";
 
 const MAX_HTML_INPUT_NAMES = 40;
+const MAX_HTML_SAMPLE_BYTES = 2 * 1_024;
+export type ODataErrorReportUrlPolicy = "normalized" | "verbatim";
+
+let errorReportUrlPolicy: ODataErrorReportUrlPolicy = "normalized";
+
+/**
+ * Управляет подробностью диагностики неожиданного HTML-ответа OData.
+ * По умолчанию параметры URL убираются и HTML не сохраняется. Приложение может
+ * получить исходные URL и короткий HTML-фрагмент, а затем восстановить умолчание.
+ */
+export function setODataErrorReportUrlPolicy(policy: ODataErrorReportUrlPolicy | undefined): void {
+	errorReportUrlPolicy = policy ?? "normalized";
+}
 
 function normalizeUrlForReport(url: string) {
 	try {
@@ -14,6 +27,10 @@ function normalizeUrlForReport(url: string) {
 	} catch {
 		return normalizeRelativePath(url);
 	}
+}
+
+function getUrlForReport(url: string) {
+	return errorReportUrlPolicy === "verbatim" ? url : normalizeUrlForReport(url);
 }
 
 function readHtmlDocument(html: string) {
@@ -47,14 +64,26 @@ function collectHtmlInputNames(html: string, doc: Document | undefined) {
 	return Array.from(new Set(names)).slice(0, MAX_HTML_INPUT_NAMES);
 }
 
+/** Возвращает исходный префикс HTML без разрыва UTF-8 символа на границе лимита. */
+function createHtmlResponseSample(html: string) {
+	const bytes = new Uint8Array(MAX_HTML_SAMPLE_BYTES);
+	const { read, written } = new TextEncoder().encodeInto(html, bytes);
+	const truncated = read < html.length;
+	return {
+		sample: truncated ? new TextDecoder().decode(bytes.subarray(0, written)) : html,
+		truncated
+	};
+}
+
 function createHtmlResponseSummary(html: string) {
 	const doc = readHtmlDocument(html);
 
-	return {
+	const summary = {
 		length: html.length,
 		formCount: countHtmlForms(html, doc),
 		inputNames: collectHtmlInputNames(html, doc)
 	};
+	return errorReportUrlPolicy === "verbatim" ? { ...summary, ...createHtmlResponseSample(html) } : summary;
 }
 
 export function reportUnexpectedHtmlResponse(
@@ -73,8 +102,8 @@ export function reportUnexpectedHtmlResponse(
 
 	reportTransportError(error, {
 		source,
-		requestUrl: requestUrl ? normalizeUrlForReport(requestUrl) : undefined,
-		responseUrl: res.url ? normalizeUrlForReport(res.url) : undefined,
+		requestUrl: requestUrl ? getUrlForReport(requestUrl) : undefined,
+		responseUrl: res.url ? getUrlForReport(res.url) : undefined,
 		method: context?.init.method?.toUpperCase() ?? "GET",
 		baseUrlType: context?.baseUrlType,
 		sapClient: context?.sapClient,

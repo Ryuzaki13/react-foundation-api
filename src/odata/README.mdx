@@ -4537,29 +4537,36 @@ Browser может выбросить `TypeError` до создания Response
 Если HTML не содержит SAML form, transport:
 
 1. Создаёт `Error("Unexpected HTML response from OData endpoint")`.
-2. Передаёт безопасный summary в error-report infrastructure.
+2. Передаёт сводку ответа в error-report infrastructure.
 3. Выбрасывает error consumer-у.
 
 В report попадает:
 
-- request/response URL без query string;
+- request/response URL без query string и fragment по умолчанию;
 - method, base URL type, SAP client;
 - status и status text;
 - content type, redirect flag, response type;
 - длина HTML;
-- title не длиннее 200 symbols;
 - количество forms;
 - до 40 уникальных input names;
-- text preview не длиннее 1000 symbols.
 
 В report не передаются:
 
-- полный raw HTML;
-- query string URL;
-- значения hidden inputs;
-- SAMLRequest/SAMLResponse values.
+- тело HTML при стандартной настройке;
+- query string и fragment URL при стандартной настройке;
+- значения SAMLRequest/SAMLResponse из распознанной SSO-формы.
 
-Это снижает риск утечки credentials/tokens в diagnostic channel.
+Приложение, которому для разбора ошибки нужны исходные адреса, может включить передачу URL целиком:
+
+```ts
+import { setODataErrorReportUrlPolicy } from "@ryuzaki13/react-foundation-api/odata";
+
+setODataErrorReportUrlPolicy("verbatim");
+// При завершении error reporting восстановить стандартную настройку.
+setODataErrorReportUrlPolicy(undefined);
+```
+
+`"verbatim"` передаёт `requestUrl` и `responseUrl` вместе с query string и fragment. Кроме того, в `html.sample` попадает исходный префикс ответа размером до 2 КиБ UTF-8; `html.truncated` показывает, был ли остаток отброшен. Текст sample не изменяется и может включать значения HTML-атрибутов. Настройка действует на последующие отчёты о неожиданном HTML-ответе и не меняет фактический HTTP-запрос. При отсутствии настройки или после `undefined` URL нормализуются прежним способом, а `html.sample` отсутствует.
 
 ### Unsupported body
 
@@ -4898,6 +4905,8 @@ it("после create инвалидирует список", async () => {
 | `BaseAppConfigURL` | Build-time app config prefix |
 | `getInputUrl` | Получить string URL из `RequestInfo` |
 | `normalizeRelativePath` | Удалить query/hash и гарантировать leading slash |
+| `setODataErrorReportUrlPolicy` | Выбрать `"verbatim"` для URL и HTML sample или стандартную сводку OData error reports |
+| `ODataErrorReportUrlPolicy` | Тип политики `"normalized" | "verbatim"` |
 | `RequestInitType` | `RequestInit` + internal retry markers |
 | `FetchErrorReportContext` | Контекст безопасного transport report |
 

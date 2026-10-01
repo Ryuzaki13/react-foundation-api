@@ -1,6 +1,7 @@
 import { setErrorReportTransportErrorReporter } from "@ryuzaki13/react-foundation-lib/error-report";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { setODataErrorReportUrlPolicy } from "./errorReport";
 import { fetchBase, fetchJson, fetchQueryFn } from "./fetch";
 import { SsoRequiredError } from "./SsoRequiredError";
 
@@ -10,6 +11,7 @@ describe("fetchBase", () => {
 	afterEach(() => {
 		global.fetch = originalFetch;
 		setErrorReportTransportErrorReporter(undefined);
+		setODataErrorReportUrlPolicy(undefined);
 		vi.restoreAllMocks();
 	});
 
@@ -158,15 +160,17 @@ describe("fetchBase", () => {
 	it("публикует транспортный отчет для HTML-ответа без SSO-формы", async () => {
 		const reporter = vi.fn();
 		const html = "<html><head><title>Gateway error</title></head><body><h1>Proxy returned login page</h1></body></html>";
+		const response = new Response(html, {
+			status: 200,
+			headers: {
+				"Content-Type": "text/html; charset=utf-8"
+			}
+		});
+		Object.defineProperty(response, "url", { value: "https://gateway.example.test/Filters?request=42#response" });
+		setODataErrorReportUrlPolicy("verbatim");
+		setODataErrorReportUrlPolicy(undefined);
 		setErrorReportTransportErrorReporter(reporter);
-		global.fetch = vi.fn().mockResolvedValue(
-			new Response(html, {
-				status: 200,
-				headers: {
-					"Content-Type": "text/html; charset=utf-8"
-				}
-			})
-		) as typeof fetch;
+		global.fetch = vi.fn().mockResolvedValue(response) as typeof fetch;
 
 		await expect(fetchJson("/Filters?cfo-count", {}, "config")).rejects.toThrow("Unexpected HTML response from OData endpoint");
 		await new Promise<void>((resolve) => {
@@ -179,6 +183,7 @@ describe("fetchBase", () => {
 			expect.objectContaining({
 				source: "fetch.parseResponse",
 				requestUrl: "/text-app/config/Filters",
+				responseUrl: "https://gateway.example.test/Filters",
 				method: "GET",
 				baseUrlType: "config",
 				status: 200,
@@ -188,5 +193,90 @@ describe("fetchBase", () => {
 		);
 		expect(JSON.stringify(reporter.mock.calls)).not.toContain("Gateway error");
 		expect(JSON.stringify(reporter.mock.calls)).not.toContain("Proxy returned login page");
+	});
+
+	it("по явной настройке передаёт полные request и response URL в транспортный отчёт", async () => {
+		const reporter = vi.fn();
+		const html = "<html><body>Gateway error</body></html>";
+		const response = new Response(html, {
+			status: 200,
+			headers: { "Content-Type": "text/html" }
+		});
+		Object.defineProperty(response, "url", { value: "https://gateway.example.test/Filters?request=42#response" });
+		setODataErrorReportUrlPolicy("verbatim");
+		setErrorReportTransportErrorReporter(reporter);
+		global.fetch = vi.fn().mockResolvedValue(response) as typeof fetch;
+
+		await expect(fetchJson("/Filters?cfo-count=1#request", {}, "config")).rejects.toThrow(
+			"Unexpected HTML response from OData endpoint"
+		);
+		await new Promise<void>((resolve) => {
+			setTimeout(resolve, 300);
+		});
+
+		expect(reporter).toHaveBeenCalledWith(
+			expect.any(Error),
+			expect.objectContaining({
+				source: "fetch.parseResponse",
+				requestUrl: "/text-app/config/Filters?cfo-count=1#request",
+				responseUrl: "https://gateway.example.test/Filters?request=42#response",
+				html: { length: html.length, formCount: 0, inputNames: [], sample: html, truncated: false }
+			})
+		);
+	});
+
+	it("сохраняет URL и для неожиданного HTML при неуспешном HTTP-статусе", async () => {
+		const reporter = vi.fn();
+		const html = "<html><body>Gateway error</body></html>";
+		const response = new Response(html, {
+			status: 502,
+			statusText: "Bad Gateway",
+			headers: { "Content-Type": "text/html" }
+		});
+		Object.defineProperty(response, "url", { value: "https://gateway.example.test/Filters?request=500#response" });
+		setODataErrorReportUrlPolicy("verbatim");
+		setErrorReportTransportErrorReporter(reporter);
+		global.fetch = vi.fn().mockResolvedValue(response) as typeof fetch;
+
+		await expect(fetchJson("/Filters?cfo-count=500#request", {}, "config")).rejects.toThrow(
+			"Unexpected HTML response from OData endpoint"
+		);
+		await new Promise<void>((resolve) => {
+			setTimeout(resolve, 300);
+		});
+
+		expect(reporter).toHaveBeenCalledWith(
+			expect.any(Error),
+			expect.objectContaining({
+				source: "fetch.buildHttpError",
+				requestUrl: "/text-app/config/Filters?cfo-count=500#request",
+				responseUrl: "https://gateway.example.test/Filters?request=500#response",
+				html: { length: html.length, formCount: 0, inputNames: [], sample: html, truncated: false }
+			})
+		);
+	});
+
+	it("ограничивает HTML-фрагмент 2 КиБ без разрыва UTF-8 символа", async () => {
+		const reporter = vi.fn();
+		const prefix = `<html>${"a".repeat(2_041)}`;
+		const html = `${prefix}😀<body>Gateway error</body></html>`;
+		setODataErrorReportUrlPolicy("verbatim");
+		setErrorReportTransportErrorReporter(reporter);
+		global.fetch = vi
+			.fn()
+			.mockResolvedValue(new Response(html, { status: 200, headers: { "Content-Type": "text/html" } })) as typeof fetch;
+
+		await expect(fetchJson("/Filters?sample=unicode", {}, "config")).rejects.toThrow("Unexpected HTML response from OData endpoint");
+		await new Promise<void>((resolve) => {
+			setTimeout(resolve, 300);
+		});
+
+		expect(reporter).toHaveBeenCalledWith(
+			expect.any(Error),
+			expect.objectContaining({
+				html: { length: html.length, formCount: 0, inputNames: [], sample: prefix, truncated: true }
+			})
+		);
+		expect(new TextEncoder().encode(prefix).byteLength).toBeLessThanOrEqual(2_048);
 	});
 });
