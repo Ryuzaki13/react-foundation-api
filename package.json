@@ -71,6 +71,10 @@
 			"types": "./dist/server-fn/index.d.ts",
 			"import": "./dist/server-fn/index.js"
 		},
+		"./snapshot-cache": {
+			"types": "./dist/snapshot-cache/index.d.ts",
+			"import": "./dist/snapshot-cache/index.js"
+		},
 		"./transport": {
 			"types": "./dist/transport/index.d.ts",
 			"import": "./dist/transport/index.js"
