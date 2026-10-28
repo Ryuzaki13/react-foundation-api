@@ -1,0 +1,3 @@
+# Нативный resolver нужен ESLint; остальные install scripts требуют отдельного рассмотрения.
+allowBuilds:
+    unrs-resolver: true

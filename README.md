@@ -55,12 +55,19 @@ import { odataQueryFn } from "@ryuzaki13/react-foundation-api";
 
 ## Проверка пакета
 
+Для разработки используется `pnpm@12.4.1`, закреплённый в `package.json#packageManager`.
+Установка зависимостей по lockfile:
+
 ```bash
-npm run lint
-npm run typecheck
-npm run test
-npm run build
-npm run pack:dry-run
+pnpm install --frozen-lockfile
+pnpm run lint
+pnpm run typecheck
+pnpm run test
+pnpm run build
+pnpm run pack:dry-run
 ```
+
+Команда `pack:dry-run` выполняет проверки и вызывает `npm pack --dry-run`.
+Для упаковки и публикации через semantic-release сохраняется npm.
 
 Если символ не экспортируется через указанный в `package.json#exports` subpath, глубокий импорт из `src` или `dist` не является публичным API.

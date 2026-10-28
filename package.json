@@ -24,7 +24,7 @@
 		"esm",
 		"websocket"
 	],
-	"packageManager": "npm@11.7.0",
+	"packageManager": "pnpm@12.4.1",
 	"type": "module",
 	"sideEffects": false,
 	"files": [
@@ -91,9 +91,9 @@
 		"test": "vitest run",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
-		"validate": "npm run lint:fix && npm run typecheck && npm run test && npm run build",
-		"pack:dry-run": "npm run validate && npm pack --dry-run",
-		"prepublishOnly": "npm run validate"
+		"validate": "pnpm run lint:fix && pnpm run typecheck && pnpm run test && pnpm run build",
+		"pack:dry-run": "pnpm run validate && npm pack --dry-run",
+		"prepublishOnly": "pnpm run validate"
 	},
 	"publishConfig": {
 		"access": "public",
@@ -127,6 +127,7 @@
 		"immer": "^11.1.15",
 		"jiti": "^2.7.0",
 		"jsdom": "^29.1.1",
+		"prettier": "3.9.6",
 		"react": "^19.2.8",
 		"react-dom": "^19.2.8",
 		"typescript": "^6.0.3",
