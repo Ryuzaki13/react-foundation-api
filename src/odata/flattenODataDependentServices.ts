@@ -1,3 +1,5 @@
+import { ODATA_PANEL_VISIBILITY_USER } from "./odataPanelVisibilityConstants";
+
 import type { ODataDependentBaseProps, ODataDependentSegmentItem } from "./types";
 
 /**
@@ -21,7 +23,7 @@ export function flattenODataDependentServices(services: readonly ODataDependentB
 					...service.model,
 					codeKey: id
 				},
-				panelVisibility: segment.panelVisibility ?? "user"
+				panelVisibility: segment.panelVisibility ?? ODATA_PANEL_VISIBILITY_USER
 			});
 		}
 	}

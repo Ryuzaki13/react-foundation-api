@@ -4,6 +4,11 @@ const DEFAULT_WINDOW_MS = 60_000;
 const DEFAULT_SOURCE_LIMIT = 20;
 const DEFAULT_GLOBAL_LIMIT = 300;
 const DEFAULT_MAX_SOURCE_BUCKETS = 10_000;
+const SOURCE_SECRET_BYTES = 32;
+const MIN_RETRY_AFTER_SECONDS = 1;
+const MILLISECONDS_PER_SECOND = 1_000;
+const HEX_ENCODING = "hex";
+const UTF8_ENCODING = "utf8";
 
 type RateLimitBucket = { count: number; resetAt: number };
 
@@ -35,7 +40,7 @@ export function createErrorReportRateLimiter(options: CreateErrorReportRateLimit
 	const sourceLimit = options.sourceLimit ?? DEFAULT_SOURCE_LIMIT;
 	const globalLimit = options.globalLimit ?? DEFAULT_GLOBAL_LIMIT;
 	const maxSourceBuckets = options.maxSourceBuckets ?? DEFAULT_MAX_SOURCE_BUCKETS;
-	const secret = options.secret ?? randomBytes(32).toString("hex");
+	const secret = options.secret ?? randomBytes(SOURCE_SECRET_BYTES).toString(HEX_ENCODING);
 	const sourceBuckets = new Map<string, RateLimitBucket>();
 	let globalBucket: RateLimitBucket | undefined;
 
@@ -50,7 +55,7 @@ export function createErrorReportRateLimiter(options: CreateErrorReportRateLimit
 		return {
 			bucket: current,
 			allowed: current.count <= limit,
-			retryAfterSeconds: Math.max(1, Math.ceil((current.resetAt - currentTime) / 1_000))
+			retryAfterSeconds: Math.max(MIN_RETRY_AFTER_SECONDS, Math.ceil((current.resetAt - currentTime) / MILLISECONDS_PER_SECOND))
 		};
 	};
 
@@ -58,10 +63,10 @@ export function createErrorReportRateLimiter(options: CreateErrorReportRateLimit
 		consume(sourceIdentity: string | undefined): ErrorReportRateLimitDecision {
 			const currentTime = now();
 			const sourceKey = createHash("sha256")
-				.update(secret, "utf8")
-				.update("\x1f", "utf8")
-				.update(sourceIdentity ?? "unknown", "utf8")
-				.digest("hex");
+				.update(secret, UTF8_ENCODING)
+				.update("\x1f", UTF8_ENCODING)
+				.update(sourceIdentity ?? "unknown", UTF8_ENCODING)
+				.digest(HEX_ENCODING);
 
 			for (const [key, bucket] of sourceBuckets) {
 				if (bucket.resetAt <= currentTime || sourceBuckets.size > maxSourceBuckets) sourceBuckets.delete(key);

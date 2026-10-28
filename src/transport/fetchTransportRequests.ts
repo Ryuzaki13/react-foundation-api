@@ -1,10 +1,10 @@
 import { fetchJson } from "../odata/transport";
+import { ODATA_BASE_URL_UI2 } from "../odata/transport/odataBaseUrlConstants";
 
 import { normalizeTransportRequests } from "./normalizeTransportRequests";
+import { TRANSPORT_REQUEST_TYPE_WORKBENCH, TRANSPORT_REQUEST_TYPE_CUSTOMIZING } from "./transportRequestConstants";
 
 import type { TransportRequest, TransportRequestRaw, TransportRequestScope, TransportRequestType, UserTransportRequests } from "./types";
-
-const TRANSPORT_SERVICE_BASE_URL = "odataUi2";
 
 const TRANSPORT_REQUEST_PATHS: Record<TransportRequestType, string> = {
 	workbench: "/TRANSPORT/WorkbenchRequests",
@@ -13,7 +13,7 @@ const TRANSPORT_REQUEST_PATHS: Record<TransportRequestType, string> = {
 
 export const transportRequestKeys = {
 	all: ["transportRequests"] as const,
-	list: (scope: TransportRequestScope = "workbench") => [...transportRequestKeys.all, scope] as const
+	list: (scope: TransportRequestScope = TRANSPORT_REQUEST_TYPE_WORKBENCH) => [...transportRequestKeys.all, scope] as const
 };
 
 export function getTransportRequestKey(request: Pick<TransportRequest, "id" | "type">) {
@@ -21,16 +21,16 @@ export function getTransportRequestKey(request: Pick<TransportRequest, "id" | "t
 }
 
 async function fetchTransportRequestsByType(type: TransportRequestType): Promise<TransportRequest[]> {
-	const items = await fetchJson<TransportRequestRaw[]>(TRANSPORT_REQUEST_PATHS[type], undefined, TRANSPORT_SERVICE_BASE_URL);
+	const items = await fetchJson<TransportRequestRaw[]>(TRANSPORT_REQUEST_PATHS[type], undefined, ODATA_BASE_URL_UI2);
 	return items ? normalizeTransportRequests(items, type) : [];
 }
 
 export async function fetchWorkbenchTransportRequests() {
-	return fetchTransportRequestsByType("workbench");
+	return fetchTransportRequestsByType(TRANSPORT_REQUEST_TYPE_WORKBENCH);
 }
 
 export async function fetchCustomizingTransportRequests() {
-	return fetchTransportRequestsByType("customizing");
+	return fetchTransportRequestsByType(TRANSPORT_REQUEST_TYPE_CUSTOMIZING);
 }
 
 export async function fetchUserTransportRequests(): Promise<UserTransportRequests> {
@@ -43,12 +43,12 @@ export async function fetchUserTransportRequests(): Promise<UserTransportRequest
 	};
 }
 
-export async function fetchTransportRequests(scope: TransportRequestScope = "workbench"): Promise<TransportRequest[]> {
-	if (scope === "workbench") {
+export async function fetchTransportRequests(scope: TransportRequestScope = TRANSPORT_REQUEST_TYPE_WORKBENCH): Promise<TransportRequest[]> {
+	if (scope === TRANSPORT_REQUEST_TYPE_WORKBENCH) {
 		return fetchWorkbenchTransportRequests();
 	}
 
-	if (scope === "customizing") {
+	if (scope === TRANSPORT_REQUEST_TYPE_CUSTOMIZING) {
 		return fetchCustomizingTransportRequests();
 	}
 

@@ -1,3 +1,8 @@
+import { ASYNC_TASK_STATUS_FULFILLED, ASYNC_TASK_STATUS_REJECTED } from "./asyncTaskStatusConstants";
+
+const DEFAULT_CONCURRENT_TASKS_LIMIT = 4;
+const TASK_PROGRESS_PERCENT_MAX = 100;
+
 export type ConcurrentTaskContext = {
 	/**
 	 * Индекс элемента во входном массиве.
@@ -16,14 +21,14 @@ export type ConcurrentTaskContext = {
 export type ConcurrentTaskFn<TInput, TResult> = (input: TInput, context: ConcurrentTaskContext) => Promise<TResult>;
 
 export type ConcurrentTaskSuccess<TInput, TResult> = {
-	status: "fulfilled";
+	status: typeof ASYNC_TASK_STATUS_FULFILLED;
 	index: number;
 	input: TInput;
 	data: TResult;
 };
 
 export type ConcurrentTaskError<TInput> = {
-	status: "rejected";
+	status: typeof ASYNC_TASK_STATUS_REJECTED;
 	index: number;
 	input: TInput;
 	error: unknown;
@@ -157,7 +162,7 @@ export async function runConcurrentTasks<TInput, TResult>(
 	task: ConcurrentTaskFn<TInput, TResult>,
 	options: RunConcurrentTasksOptions<TInput, TResult> = {}
 ): Promise<RunConcurrentTasksResult<TInput, TResult>> {
-	const { concurrency = 4, signal, onProgress, onItemSuccess, onItemError } = options;
+	const { concurrency = DEFAULT_CONCURRENT_TASKS_LIMIT, signal, onProgress, onItemSuccess, onItemError } = options;
 
 	validateConcurrency(concurrency);
 
@@ -196,7 +201,8 @@ export async function runConcurrentTasks<TInput, TResult>(
 			failed,
 			running,
 			pending: Math.max(inputs.length - completed - running, 0),
-			percentage: inputs.length === 0 ? 100 : Math.round((completed / inputs.length) * 100),
+			percentage:
+				inputs.length === 0 ? TASK_PROGRESS_PERCENT_MAX : Math.round((completed / inputs.length) * TASK_PROGRESS_PERCENT_MAX),
 			aborted: isAborted(),
 			lastSettled
 		});
@@ -227,7 +233,7 @@ export async function runConcurrentTasks<TInput, TResult>(
 				});
 
 				const item: ConcurrentTaskSuccess<TInput, TResult> = {
-					status: "fulfilled",
+					status: ASYNC_TASK_STATUS_FULFILLED,
 					index: currentIndex,
 					input,
 					data
@@ -238,7 +244,7 @@ export async function runConcurrentTasks<TInput, TResult>(
 				onItemSuccess?.(item);
 			} catch (error) {
 				const item: ConcurrentTaskError<TInput> = {
-					status: "rejected",
+					status: ASYNC_TASK_STATUS_REJECTED,
 					index: currentIndex,
 					input,
 					error
@@ -276,7 +282,7 @@ export async function runConcurrentTasks<TInput, TResult>(
 
 		settled.push(item);
 
-		if (item.status === "fulfilled") {
+		if (item.status === ASYNC_TASK_STATUS_FULFILLED) {
 			successes.push(item);
 		} else {
 			errors.push(item);

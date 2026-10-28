@@ -1,3 +1,5 @@
+import { type HTTP_METHOD_POST, type HTTP_METHOD_PUT, type HTTP_METHOD_PATCH, type HTTP_METHOD_DELETE } from "./httpProtocolConstants";
+
 /**
  * Настройки чистого HTTP-запроса без SAP/OData/SAML2 политики.
  */
@@ -18,7 +20,7 @@ export type HttpQueryFnOptions<TResult> = HttpRequestOptions & {
  * Настройки HTTP mutation factory.
  */
 export type HttpMutationFnOptions<TInput, TResult> = HttpRequestOptions & {
-	readonly method?: "POST" | "PUT" | "PATCH" | "DELETE";
+	readonly method?: typeof HTTP_METHOD_POST | typeof HTTP_METHOD_PUT | typeof HTTP_METHOD_PATCH | typeof HTTP_METHOD_DELETE;
 	readonly mapBody?: (input: TInput) => unknown;
 	readonly parse: (data: unknown) => TResult;
 };

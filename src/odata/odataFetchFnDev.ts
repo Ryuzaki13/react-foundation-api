@@ -1,6 +1,8 @@
 import { notify } from "@ryuzaki13/react-foundation-lib/notifications";
 import { QueryClient } from "@tanstack/react-query";
 
+import { HTTP_HEADER_CONTENT_TYPE, HTTP_HEADER_ACCEPT, HTTP_CONTENT_TYPE_JSON } from "../http/httpProtocolConstants";
+
 import { buildODataFetchRequest, ODataFetchRequestPreview } from "./odataFetch";
 import {
 	ODataArrayOperationMethod,
@@ -29,7 +31,29 @@ import {
 	resolveRequestMethod,
 	validateODataOperation
 } from "./odataFetchFnHelpers";
+import {
+	ODATA_OPERATION_CREATE,
+	ODATA_OPERATION_UPDATE,
+	ODATA_OPERATION_DELETE,
+	ODATA_OPERATION_READ,
+	ODATA_OPERATION_QUERY,
+	ODATA_OPERATION_FUNCTION_IMPORT
+} from "./odataOperationConstants";
 import { resolveODataBaseUrl } from "./transport";
+import { ODATA_BASE_URL_DEFAULT, ODATA_BASE_URL_DIRECT } from "./transport/odataBaseUrlConstants";
+import {
+	ODATA_READ_HTTP_METHODS,
+	ODATA_HEADER_SERVICE_VERSION,
+	ODATA_HEADER_MAX_SERVICE_VERSION,
+	ODATA_SERVICE_VERSION,
+	SAP_HEADER_LANGUAGE,
+	SAP_REQUEST_LANGUAGE,
+	SAP_HEADER_CONTEXT_ID_ACCEPT,
+	SAP_CONTEXT_ID_ACCEPT,
+	SAP_HEADER_CSRF_TOKEN,
+	SAP_PATH_PREFIX,
+	SAP_DP0_PATH_PREFIX
+} from "./transport/odataTransportConstants";
 import { getODataMetadataData } from "./useODataMetadataQuery";
 
 import type {
@@ -96,14 +120,14 @@ function parseRequestBodyForLog(body: BodyInit | null | undefined): unknown {
 }
 
 function isWriteRequest(method: string | undefined) {
-	return method !== undefined && !["GET", "HEAD"].includes(method.toUpperCase());
+	return method !== undefined && !ODATA_READ_HTTP_METHODS.includes(method.toUpperCase());
 }
 
 function isSapRequestPreview(request: ODataFetchRequestPreview) {
-	const baseUrl = request.baseUrl ?? "odata";
-	if (baseUrl !== "") return true;
+	const baseUrl = request.baseUrl ?? ODATA_BASE_URL_DEFAULT;
+	if (baseUrl !== ODATA_BASE_URL_DIRECT) return true;
 
-	return request.path.startsWith("/sap/") || request.path.startsWith("/sap-dp0/");
+	return request.path.startsWith(SAP_PATH_PREFIX) || request.path.startsWith(SAP_DP0_PATH_PREFIX);
 }
 
 function hasHeader(headers: Record<string, string>, name: string) {
@@ -121,22 +145,22 @@ function buildTransportHeadersPreview(request: ODataFetchRequestPreview) {
 	const method = request.init.method;
 	const sapRequest = isSapRequestPreview(request);
 
-	setDefaultHeader(headers, "DataServiceVersion", "2.0");
-	setDefaultHeader(headers, "MaxDataServiceVersion", "2.0");
-	setDefaultHeader(headers, "Accept", "application/json");
+	setDefaultHeader(headers, ODATA_HEADER_SERVICE_VERSION, ODATA_SERVICE_VERSION);
+	setDefaultHeader(headers, ODATA_HEADER_MAX_SERVICE_VERSION, ODATA_SERVICE_VERSION);
+	setDefaultHeader(headers, HTTP_HEADER_ACCEPT, HTTP_CONTENT_TYPE_JSON);
 
-	headers["sap-language"] = "ru";
+	headers[SAP_HEADER_LANGUAGE] = SAP_REQUEST_LANGUAGE;
 
 	if (sapRequest) {
-		headers["sap-contextid-accept"] = "header";
+		headers[SAP_HEADER_CONTEXT_ID_ACCEPT] = SAP_CONTEXT_ID_ACCEPT;
 	}
 
 	if (isWriteRequest(method) && request.init.body) {
-		setDefaultHeader(headers, "Content-Type", "application/json");
+		setDefaultHeader(headers, HTTP_HEADER_CONTENT_TYPE, HTTP_CONTENT_TYPE_JSON);
 	}
 
 	if (isWriteRequest(method) && sapRequest) {
-		setDefaultHeader(headers, "x-csrf-token", "<получается отдельным GET перед реальным write-запросом>");
+		setDefaultHeader(headers, SAP_HEADER_CSRF_TOKEN, "<получается отдельным GET перед реальным write-запросом>");
 	}
 
 	return headers;
@@ -184,7 +208,7 @@ function logODataDevRequest(info: ODataDevRequestLogInfo) {
 	logger.info("Body:", bodyPreview ?? "<пусто>");
 	logger.info("Auto parse:", info.autoParse ?? false);
 	logger.info("Transform:", info.hasTransform ? "передан, но не вызывается без ответа backend" : "не передан");
-	logger.info("Dry-run result:", info.operation === "query" ? { data: [], totalCount: 0 } : { data: undefined });
+	logger.info("Dry-run result:", info.operation === ODATA_OPERATION_QUERY ? { data: [], totalCount: 0 } : { data: undefined });
 	logObjectSection("OData config", info.odata);
 	logObjectSection("Target metadata", info.target);
 	logObjectSection("Target params", info.params);
@@ -244,7 +268,7 @@ function createODataFetchFnDevRunner<I>(
 			hasTransform: Boolean(opts.transform)
 		});
 
-		if (method === "query") {
+		if (method === ODATA_OPERATION_QUERY) {
 			return { data: [], totalCount: 0 };
 		}
 
@@ -289,28 +313,28 @@ export function odataFetchFnDev<
 export function odataFetchFnDev(...args: ODataFetchFnImplementationArgs): ODataFetchFnRunner<unknown> {
 	if (!__DEV__) {
 		switch (args[0]) {
-			case "create": {
-				return odataFetchFn("create", args[1]);
+			case ODATA_OPERATION_CREATE: {
+				return odataFetchFn(ODATA_OPERATION_CREATE, args[1]);
 			}
 
-			case "update": {
-				return odataFetchFn("update", args[1]);
+			case ODATA_OPERATION_UPDATE: {
+				return odataFetchFn(ODATA_OPERATION_UPDATE, args[1]);
 			}
 
-			case "delete": {
-				return odataFetchFn("delete", args[1]);
+			case ODATA_OPERATION_DELETE: {
+				return odataFetchFn(ODATA_OPERATION_DELETE, args[1]);
 			}
 
-			case "read": {
-				return odataFetchFn("read", args[1]);
+			case ODATA_OPERATION_READ: {
+				return odataFetchFn(ODATA_OPERATION_READ, args[1]);
 			}
 
-			case "query": {
-				return odataFetchFn("query", args[1]);
+			case ODATA_OPERATION_QUERY: {
+				return odataFetchFn(ODATA_OPERATION_QUERY, args[1]);
 			}
 
-			case "fi": {
-				return odataFetchFn("fi", args[1]);
+			case ODATA_OPERATION_FUNCTION_IMPORT: {
+				return odataFetchFn(ODATA_OPERATION_FUNCTION_IMPORT, args[1]);
 			}
 
 			default: {
@@ -332,10 +356,10 @@ export function odataCreateFnDev<I, O = I, T = I>(
 ): ODataFetchFnRunner<O>;
 export function odataCreateFnDev<I, O = I, T = I>(opts: ODataCreateFnOptions<I, O, T>): ODataFetchFnRunner<unknown> {
 	if (!__DEV__) {
-		return odataFetchFn<I, O, T, never, "create">("create", opts);
+		return odataFetchFn<I, O, T, never, typeof ODATA_OPERATION_CREATE>(ODATA_OPERATION_CREATE, opts);
 	}
 
-	return createODataFetchFnDevRunner<I>("create", opts, "odataCreateFnDev");
+	return createODataFetchFnDevRunner<I>(ODATA_OPERATION_CREATE, opts, "odataCreateFnDev");
 }
 
 export function odataUpdateFnDev<I, T = I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
@@ -348,10 +372,10 @@ export function odataUpdateFnDev<I, O = I, T = I, P extends UnwrappedODataParame
 	opts: ODataUpdateFnOptions<I, O, T, P>
 ): ODataFetchFnRunner<unknown> {
 	if (!__DEV__) {
-		return odataFetchFn<I, O, T, P, "update">("update", opts);
+		return odataFetchFn<I, O, T, P, typeof ODATA_OPERATION_UPDATE>(ODATA_OPERATION_UPDATE, opts);
 	}
 
-	return createODataFetchFnDevRunner<I>("update", opts, "odataUpdateFnDev");
+	return createODataFetchFnDevRunner<I>(ODATA_OPERATION_UPDATE, opts, "odataUpdateFnDev");
 }
 
 export function odataDeleteFnDev<I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
@@ -364,10 +388,10 @@ export function odataDeleteFnDev<I, O = I, P extends UnwrappedODataParameters = 
 	opts: ODataDeleteFnOptions<I, O, P>
 ): ODataFetchFnRunner<unknown> {
 	if (!__DEV__) {
-		return odataFetchFn<I, O, I, P, "delete">("delete", opts);
+		return odataFetchFn<I, O, I, P, typeof ODATA_OPERATION_DELETE>(ODATA_OPERATION_DELETE, opts);
 	}
 
-	return createODataFetchFnDevRunner<I>("delete", opts, "odataDeleteFnDev");
+	return createODataFetchFnDevRunner<I>(ODATA_OPERATION_DELETE, opts, "odataDeleteFnDev");
 }
 
 export function odataReadFnDev<I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
@@ -380,10 +404,10 @@ export function odataReadFnDev<I, O = I, P extends UnwrappedODataParameters = Un
 	opts: ODataReadFnOptions<I, O, P>
 ): ODataFetchFnRunner<unknown> {
 	if (!__DEV__) {
-		return odataFetchFn<I, O, I, P, "read">("read", opts);
+		return odataFetchFn<I, O, I, P, typeof ODATA_OPERATION_READ>(ODATA_OPERATION_READ, opts);
 	}
 
-	return createODataFetchFnDevRunner<I>("read", opts, "odataReadFnDev");
+	return createODataFetchFnDevRunner<I>(ODATA_OPERATION_READ, opts, "odataReadFnDev");
 }
 
 export function odataQueryFnDev<I, O = I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
@@ -399,10 +423,10 @@ export function odataQueryFnDev<I, O = I, P extends UnwrappedODataParameters = U
 	opts: ODataQueryFnOptions<I, O, P>
 ): ODataFetchFnRunner<unknown> {
 	if (!__DEV__) {
-		return odataFetchFn<I, O, void, P, "query">("query", opts);
+		return odataFetchFn<I, O, void, P, typeof ODATA_OPERATION_QUERY>(ODATA_OPERATION_QUERY, opts);
 	}
 
-	return createODataFetchFnDevRunner<I>("query", opts, "odataQueryFnDev");
+	return createODataFetchFnDevRunner<I>(ODATA_OPERATION_QUERY, opts, "odataQueryFnDev");
 }
 
 export function odataFunctionImportFnDev<I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
@@ -415,8 +439,8 @@ export function odataFunctionImportFnDev<I, O = I, P extends UnwrappedODataParam
 	opts: ODataFunctionImportFnOptions<I, O, P>
 ): ODataFetchFnRunner<unknown> {
 	if (!__DEV__) {
-		return odataFetchFn<I, O, I, P, "fi">("fi", opts);
+		return odataFetchFn<I, O, I, P, typeof ODATA_OPERATION_FUNCTION_IMPORT>(ODATA_OPERATION_FUNCTION_IMPORT, opts);
 	}
 
-	return createODataFetchFnDevRunner<I>("fi", opts, "odataFunctionImportFnDev");
+	return createODataFetchFnDevRunner<I>(ODATA_OPERATION_FUNCTION_IMPORT, opts, "odataFunctionImportFnDev");
 }

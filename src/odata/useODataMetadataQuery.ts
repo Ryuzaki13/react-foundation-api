@@ -4,6 +4,8 @@ import { parseServiceMetadata } from "@ryuzaki13/react-foundation-lib/odata-serv
 import { persistedQueryMeta } from "@ryuzaki13/react-foundation-lib/query-client";
 import { QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { HTTP_HEADER_CONTENT_TYPE, HTTP_HEADER_ACCEPT } from "../http/httpProtocolConstants";
+
 import {
 	invalidateODataMetadataQueries,
 	ODataMetadataVersionOptions,
@@ -12,6 +14,7 @@ import {
 	shouldRefreshODataMetadataByVersion
 } from "./metadataVersionCheck";
 import { odataBaseQueryKey } from "./odataBaseQueryKey";
+import { ODATA_QUERY_TYPE_METADATA } from "./odataQueryKeyConstants";
 import { BaseURLType, fetchQueryFn, resolveODataBaseUrl } from "./transport";
 
 import type { ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-service";
@@ -23,8 +26,8 @@ export function fetchMetadata(options: ODataMetadataOptions) {
 		baseUrl: resolveODataBaseUrl(options.service, options.baseUrl),
 		init: {
 			headers: {
-				Accept: "*/*",
-				"Content-Type": "application/xml"
+				[HTTP_HEADER_ACCEPT]: "*/*",
+				[HTTP_HEADER_CONTENT_TYPE]: "application/xml"
 			}
 		},
 		transform: async (data) => {
@@ -44,7 +47,7 @@ export const odataMetadataQueryOptions = (options: ODataMetadataOptions) => {
 	};
 
 	return queryOptions({
-		queryKey: [...odataBaseQueryKey, "metadata", resolvedOptions],
+		queryKey: [...odataBaseQueryKey, ODATA_QUERY_TYPE_METADATA, resolvedOptions],
 		queryFn: fetchMetadata(resolvedOptions),
 		meta: persistedQueryMeta,
 		enabled: Boolean(options.service),

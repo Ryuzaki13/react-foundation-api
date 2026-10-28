@@ -1,3 +1,5 @@
+import { type ODATA_PANEL_VISIBILITY_USER } from "./odataPanelVisibilityConstants";
+
 import type { CollectionItem, FilterExpression, ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-service";
 
 /**
@@ -6,7 +8,7 @@ import type { CollectionItem, FilterExpression, ODataServiceConfig } from "@ryuz
  * Тип принадлежит OData/UI API-слою, потому что используется не только
  * contract-конфигами, но и runtime-моделями зависимых OData-сегментов.
  */
-export type ControlPanelVisibility = "user" | "always" | "none";
+export type ControlPanelVisibility = typeof ODATA_PANEL_VISIBILITY_USER | "always" | "none";
 
 export interface ODataServiceCollectionConfig extends ODataServiceConfig {
 	/**

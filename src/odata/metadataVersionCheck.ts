@@ -5,6 +5,7 @@ import { QueryClient, queryOptions, QueryState } from "@tanstack/react-query";
 import { odataBaseQueryKey } from "./odataBaseQueryKey";
 import { odataFetch } from "./odataFetch";
 import { getODataProjectAdapter, normalizeODataServiceName, resolveODataBaseUrl } from "./odataProjectAdapter";
+import { ODATA_QUERY_TYPE_METADATA } from "./odataQueryKeyConstants";
 
 import type { ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-service";
 
@@ -95,7 +96,7 @@ export function invalidateODataMetadataQueries(queryClient: QueryClient, service
 		{
 			predicate: (query) => {
 				const [baseKey, queryType, queryOptionsValue] = query.queryKey;
-				if (baseKey !== odataBaseQueryKey[0] || queryType !== "metadata") return false;
+				if (baseKey !== odataBaseQueryKey[0] || queryType !== ODATA_QUERY_TYPE_METADATA) return false;
 				if (!queryOptionsValue || typeof queryOptionsValue !== "object") return false;
 
 				return "service" in queryOptionsValue && queryOptionsValue.service === service;

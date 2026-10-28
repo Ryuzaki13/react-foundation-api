@@ -8,6 +8,10 @@ import { useODataCollectionQuery } from "./useODataCollectionQuery";
 
 import type { CollectionItem } from "@ryuzaki13/react-foundation-lib/odata-service";
 
+const COLLECTION_DEFAULT_PAGE_SIZE = 50;
+const COLLECTION_SEARCH_PREFIX_MAX_LENGTH = 5;
+const COLLECTION_DEFAULT_DEBOUNCE_DELAY_MS = 200;
+
 interface UseODataCollectionProps {
 	odata: ODataCollectionConfig;
 	model: Required<ODataCollectionModel>;
@@ -24,7 +28,7 @@ export function useODataCollection({
 	odata,
 	model,
 	// filter,
-	pageSize = 50
+	pageSize = COLLECTION_DEFAULT_PAGE_SIZE
 }: UseODataCollectionProps) {
 	const { codeKey, maxVisibleItems } = model;
 	const { data: rawData, isLoading, isError, refetch } = useODataCollectionQuery(odata);
@@ -79,7 +83,7 @@ export function useODataCollection({
 				if (!value) continue;
 
 				// Индексируем по префиксам длиной 1-5 символов
-				for (let i = 1; i <= Math.min(5, value.length); i++) {
+				for (let i = 1; i <= Math.min(COLLECTION_SEARCH_PREFIX_MAX_LENGTH, value.length); i++) {
 					const prefix = value.substring(0, i);
 					if (!index.has(prefix)) {
 						index.set(prefix, new Set<string>());
@@ -190,7 +194,7 @@ export function useODataCollection({
 	/**
 	 * Дебаунсинг для частых операций.
 	 */
-	const debounce = useCallback((key: string, fn: () => void, delay: number = 200) => {
+	const debounce = useCallback((key: string, fn: () => void, delay: number = COLLECTION_DEFAULT_DEBOUNCE_DELAY_MS) => {
 		// Очищаем предыдущий таймер
 		if (debounceTimers.current.has(key)) {
 			clearTimeout(debounceTimers.current.get(key)!);

@@ -13,6 +13,8 @@ import { useODataMetadata } from "./useODataMetadata";
 
 import type { EntityColumnProperty, EntityMetadata, ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-service";
 
+const ODATA_TABLE_COLUMNS_MODE_BUILD = "build";
+
 /**
  * Собирает visibility-state только для тех leaf-колонок, которые сопоставились с metadata.
  */
@@ -50,7 +52,7 @@ export interface UseODataTableColumnsBuildConfig extends Pick<ODataServiceConfig
 	/**
 	 * Режим генерации колонок только по metadata.
 	 */
-	mode: "build";
+	mode: typeof ODATA_TABLE_COLUMNS_MODE_BUILD;
 	/**
 	 * Позволяет определить видимость колонки при генерации.
 	 */
@@ -120,10 +122,10 @@ export function useODataTableColumns<TData extends object = Record<string, unkno
 
 	const columns = useMemo(() => {
 		if (!metadata) {
-			return config.mode === "build" ? [] : [...config.columns];
+			return config.mode === ODATA_TABLE_COLUMNS_MODE_BUILD ? [] : [...config.columns];
 		}
 
-		if (config.mode === "build") {
+		if (config.mode === ODATA_TABLE_COLUMNS_MODE_BUILD) {
 			return createTableColumnsFromODataMetadata<TData>(metadata.columns, {
 				resolveHeader: config.resolveHeader,
 				resolveFormatting: config.resolveFormatting
@@ -138,7 +140,7 @@ export function useODataTableColumns<TData extends object = Record<string, unkno
 			return undefined;
 		}
 
-		if (config.mode === "build") {
+		if (config.mode === ODATA_TABLE_COLUMNS_MODE_BUILD) {
 			return createTableColumnVisibilityFromODataMetadata(metadata.columns, {
 				resolveVisible: config.resolveVisible
 			});

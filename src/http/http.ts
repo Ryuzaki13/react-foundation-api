@@ -1,3 +1,12 @@
+import {
+	HTTP_STATUS_NO_CONTENT,
+	HTTP_STATUS_RESET_CONTENT,
+	HTTP_HEADER_CONTENT_TYPE,
+	HTTP_CONTENT_TYPE_JSON,
+	HTTP_HEADER_SW_CACHE,
+	HTTP_METHOD_POST
+} from "./httpProtocolConstants";
+
 import type { HttpMutationFnOptions, HttpQueryFnOptions, HttpRequestOptions } from "./types";
 
 function resolveHttpUrl(input: RequestInfo | URL, baseUrl?: string) {
@@ -20,12 +29,12 @@ function mergeHttpInit(options?: HttpRequestOptions, signal?: AbortSignal): Requ
 }
 
 async function parseHttpResponse(response: Response): Promise<unknown> {
-	if (response.status === 204 || response.status === 205) {
+	if (response.status === HTTP_STATUS_NO_CONTENT || response.status === HTTP_STATUS_RESET_CONTENT) {
 		return null;
 	}
 
-	const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
-	if (contentType.includes("application/json")) {
+	const contentType = response.headers.get(HTTP_HEADER_CONTENT_TYPE)?.toLowerCase() ?? "";
+	if (contentType.includes(HTTP_CONTENT_TYPE_JSON)) {
 		return await response.json();
 	}
 
@@ -68,7 +77,7 @@ export function httpJsonQueryFn<TResult>(url: string, options: HttpQueryFnOption
 		const headers = new Headers(init.headers);
 
 		if (options.swCache) {
-			headers.set("x-sw-cache", options.swCache);
+			headers.set(HTTP_HEADER_SW_CACHE, options.swCache);
 		}
 
 		const payload = await httpFetchPayload(url, {
@@ -92,15 +101,15 @@ export function httpJsonMutationFn<TInput, TResult>(url: string, options: HttpMu
 		const init = mergeHttpInit(options, signal);
 		const headers = new Headers(init.headers);
 
-		if (!headers.has("Content-Type")) {
-			headers.set("Content-Type", "application/json");
+		if (!headers.has(HTTP_HEADER_CONTENT_TYPE)) {
+			headers.set(HTTP_HEADER_CONTENT_TYPE, HTTP_CONTENT_TYPE_JSON);
 		}
 
 		const payload = await httpFetchPayload(url, {
 			baseUrl: options.baseUrl,
 			init: {
 				...init,
-				method: options.method ?? "POST",
+				method: options.method ?? HTTP_METHOD_POST,
 				headers,
 				body: JSON.stringify(body)
 			}

@@ -1,4 +1,5 @@
 import { AsyncTasksError } from "./AsyncTasksError";
+import { ASYNC_TASK_STATUS_FULFILLED, ASYNC_TASK_STATUS_REJECTED } from "./asyncTaskStatusConstants";
 
 export type AsyncTask<TResult = unknown> = {
 	readonly name: string;
@@ -6,14 +7,14 @@ export type AsyncTask<TResult = unknown> = {
 };
 
 export type AsyncTaskSuccess<TResult> = {
-	readonly status: "fulfilled";
+	readonly status: typeof ASYNC_TASK_STATUS_FULFILLED;
 	readonly index: number;
 	readonly name: string;
 	readonly data: TResult;
 };
 
 export type AsyncTaskFailure = {
-	readonly status: "rejected";
+	readonly status: typeof ASYNC_TASK_STATUS_REJECTED;
 	readonly index: number;
 	readonly name: string;
 	readonly error: unknown;
@@ -43,14 +44,14 @@ async function runSingleAsyncTask<TResult>(task: AsyncTask<TResult>, index: numb
 		const data = await task.run();
 
 		return {
-			status: "fulfilled",
+			status: ASYNC_TASK_STATUS_FULFILLED,
 			index,
 			name: task.name,
 			data
 		};
 	} catch (error) {
 		return {
-			status: "rejected",
+			status: ASYNC_TASK_STATUS_REJECTED,
 			index,
 			name: task.name,
 			error
@@ -66,12 +67,12 @@ function splitAsyncTaskSettled<TResult>(
 
 	for (const item of settled) {
 		switch (item.status) {
-			case "fulfilled": {
+			case ASYNC_TASK_STATUS_FULFILLED: {
 				successes.push(item);
 				break;
 			}
 
-			case "rejected": {
+			case ASYNC_TASK_STATUS_REJECTED: {
 				errors.push(item);
 				break;
 			}

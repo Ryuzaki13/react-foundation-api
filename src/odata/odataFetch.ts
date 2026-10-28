@@ -1,6 +1,9 @@
 import { buildODataFilter, buildODataOrder, type FilterExpression, type Sort } from "@ryuzaki13/react-foundation-lib/odata-service";
 
+import { HTTP_HEADER_SW_CACHE } from "../http/httpProtocolConstants";
+
 import { BaseUrlMap, BaseURLType, fetchODataJson } from "./transport";
+import { ODATA_BASE_URL_DEFAULT } from "./transport/odataBaseUrlConstants";
 
 export type ODataFetchOptions<T> = {
 	/**
@@ -110,13 +113,13 @@ export function buildODataFetchRequest<T>(entitySetPath: string, options: ODataF
 	// Передаём политику SW-кеширования через заголовок x-sw-cache
 	if (options.swCache) {
 		const headers = new Headers(init.headers);
-		headers.set("x-sw-cache", options.swCache);
+		headers.set(HTTP_HEADER_SW_CACHE, options.swCache);
 		requestInit = { ...init, headers };
 	}
 
 	return {
 		path: fullUrl,
-		fullUrl: `${BaseUrlMap[options.baseUrl ?? "odata"]}${fullUrl}`,
+		fullUrl: `${BaseUrlMap[options.baseUrl ?? ODATA_BASE_URL_DEFAULT]}${fullUrl}`,
 		baseUrl: options.baseUrl,
 		init: requestInit,
 		queryString

@@ -1,4 +1,12 @@
 import {
+	MANAGED_WEB_SOCKET_STATUS_CONNECTING,
+	MANAGED_WEB_SOCKET_STATUS_IDLE,
+	MANAGED_WEB_SOCKET_STATUS_OPEN,
+	MANAGED_WEB_SOCKET_STATUS_RECONNECTING,
+	MANAGED_WEB_SOCKET_STATUS_STOPPED,
+	MANAGED_WEB_SOCKET_STATUS_UNAVAILABLE
+} from "./managedWebSocketConstants";
+import {
 	type ManagedWebSocket,
 	type ManagedWebSocketOptions,
 	type ManagedWebSocketSnapshot,
@@ -8,14 +16,13 @@ import {
 } from "./types";
 
 const WEB_SOCKET_OPEN_STATE = 1;
-
-const DEFAULT_RECONNECT_POLICY = {
-	initialDelayMs: 1_000,
-	maxDelayMs: 30_000,
-	multiplier: 2,
-	jitterRatio: 0.2,
-	maxAttempts: Number.POSITIVE_INFINITY
-} as const;
+const WEB_SOCKET_CLOSE_NORMAL = 1_000;
+const WEB_SOCKET_CLOSE_POLICY_VIOLATION = 1_008;
+const DEFAULT_RECONNECT_INITIAL_DELAY_MS = 1_000;
+const DEFAULT_RECONNECT_MAX_DELAY_MS = 30_000;
+const DEFAULT_RECONNECT_MULTIPLIER = 2;
+const DEFAULT_RECONNECT_JITTER_RATIO = 0.2;
+const DEFAULT_RECONNECT_MAX_ATTEMPTS = Number.POSITIVE_INFINITY;
 
 function resolveFiniteNonNegative(value: number | undefined, fallback: number): number {
 	return value !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -23,18 +30,20 @@ function resolveFiniteNonNegative(value: number | undefined, fallback: number): 
 
 function resolveReconnectPolicy(policy: WebSocketReconnectPolicy | undefined) {
 	return {
-		initialDelayMs: resolveFiniteNonNegative(policy?.initialDelayMs, DEFAULT_RECONNECT_POLICY.initialDelayMs),
-		maxDelayMs: resolveFiniteNonNegative(policy?.maxDelayMs, DEFAULT_RECONNECT_POLICY.maxDelayMs),
+		initialDelayMs: resolveFiniteNonNegative(policy?.initialDelayMs, DEFAULT_RECONNECT_INITIAL_DELAY_MS),
+		maxDelayMs: resolveFiniteNonNegative(policy?.maxDelayMs, DEFAULT_RECONNECT_MAX_DELAY_MS),
 		multiplier:
 			policy?.multiplier !== undefined && Number.isFinite(policy.multiplier) && policy.multiplier >= 1
 				? policy.multiplier
-				: DEFAULT_RECONNECT_POLICY.multiplier,
+				: DEFAULT_RECONNECT_MULTIPLIER,
 		jitterRatio:
 			policy?.jitterRatio !== undefined && Number.isFinite(policy.jitterRatio)
 				? Math.min(1, Math.max(0, policy.jitterRatio))
-				: DEFAULT_RECONNECT_POLICY.jitterRatio,
-		maxAttempts: resolveFiniteNonNegative(policy?.maxAttempts, DEFAULT_RECONNECT_POLICY.maxAttempts),
-		shouldReconnect: policy?.shouldReconnect ?? ((event: WebSocketCloseEventLike) => event.code !== 1_000 && event.code !== 1_008)
+				: DEFAULT_RECONNECT_JITTER_RATIO,
+		maxAttempts: resolveFiniteNonNegative(policy?.maxAttempts, DEFAULT_RECONNECT_MAX_ATTEMPTS),
+		shouldReconnect:
+			policy?.shouldReconnect ??
+			((event: WebSocketCloseEventLike) => event.code !== WEB_SOCKET_CLOSE_NORMAL && event.code !== WEB_SOCKET_CLOSE_POLICY_VIOLATION)
 	};
 }
 
@@ -65,7 +74,7 @@ export function createManagedWebSocket(options: ManagedWebSocketOptions): Manage
 	const scheduleTimeout = options.setTimeout ?? globalThis.setTimeout;
 	const cancelTimeout = options.clearTimeout ?? globalThis.clearTimeout;
 	const listeners = new Set<() => void>();
-	let snapshot: ManagedWebSocketSnapshot = { status: "idle", reconnectAttempt: 0 };
+	let snapshot: ManagedWebSocketSnapshot = { status: MANAGED_WEB_SOCKET_STATUS_IDLE, reconnectAttempt: 0 };
 	let socket: WebSocketLike | null = null;
 	let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 	let generation = 0;
@@ -87,7 +96,10 @@ export function createManagedWebSocket(options: ManagedWebSocketOptions): Manage
 		if (stopped || socket) return;
 		clearReconnectTimer();
 		const currentGeneration = ++generation;
-		publish({ status: isReconnect ? "reconnecting" : "connecting", reconnectAttempt: snapshot.reconnectAttempt });
+		publish({
+			status: isReconnect ? MANAGED_WEB_SOCKET_STATUS_RECONNECTING : MANAGED_WEB_SOCKET_STATUS_CONNECTING,
+			reconnectAttempt: snapshot.reconnectAttempt
+		});
 
 		try {
 			socket = socketFactory(typeof options.url === "function" ? options.url() : options.url, options.protocols);
@@ -100,7 +112,7 @@ export function createManagedWebSocket(options: ManagedWebSocketOptions): Manage
 		const currentSocket = socket;
 		currentSocket.addEventListener("open", (event) => {
 			if (generation !== currentGeneration || socket !== currentSocket || stopped) return;
-			publish({ status: "open", reconnectAttempt: 0 });
+			publish({ status: MANAGED_WEB_SOCKET_STATUS_OPEN, reconnectAttempt: 0 });
 			options.onOpen?.(event);
 		});
 		currentSocket.addEventListener("message", (event) => {
@@ -117,7 +129,7 @@ export function createManagedWebSocket(options: ManagedWebSocketOptions): Manage
 			options.onClose?.(event);
 			if (stopped) return;
 			if (!policy.shouldReconnect(event)) {
-				publish({ status: "unavailable", reconnectAttempt: snapshot.reconnectAttempt });
+				publish({ status: MANAGED_WEB_SOCKET_STATUS_UNAVAILABLE, reconnectAttempt: snapshot.reconnectAttempt });
 				return;
 			}
 			scheduleReconnect();
@@ -128,10 +140,10 @@ export function createManagedWebSocket(options: ManagedWebSocketOptions): Manage
 		if (stopped || reconnectTimer !== null) return;
 		const attempt = snapshot.reconnectAttempt + 1;
 		if (attempt > policy.maxAttempts) {
-			publish({ status: "unavailable", reconnectAttempt: snapshot.reconnectAttempt });
+			publish({ status: MANAGED_WEB_SOCKET_STATUS_UNAVAILABLE, reconnectAttempt: snapshot.reconnectAttempt });
 			return;
 		}
-		publish({ status: "reconnecting", reconnectAttempt: attempt });
+		publish({ status: MANAGED_WEB_SOCKET_STATUS_RECONNECTING, reconnectAttempt: attempt });
 		const delay = getWebSocketReconnectDelay(attempt, policy, random());
 		reconnectTimer = scheduleTimeout(() => {
 			reconnectTimer = null;
@@ -141,9 +153,16 @@ export function createManagedWebSocket(options: ManagedWebSocketOptions): Manage
 
 	return {
 		connect() {
-			if (socket || reconnectTimer !== null || (!stopped && snapshot.status !== "idle" && snapshot.status !== "unavailable")) return;
+			if (
+				socket ||
+				reconnectTimer !== null ||
+				(!stopped &&
+					snapshot.status !== MANAGED_WEB_SOCKET_STATUS_IDLE &&
+					snapshot.status !== MANAGED_WEB_SOCKET_STATUS_UNAVAILABLE)
+			)
+				return;
 			stopped = false;
-			publish({ status: "idle", reconnectAttempt: 0 });
+			publish({ status: MANAGED_WEB_SOCKET_STATUS_IDLE, reconnectAttempt: 0 });
 			openSocket(false);
 		},
 		reconnect() {
@@ -152,18 +171,18 @@ export function createManagedWebSocket(options: ManagedWebSocketOptions): Manage
 			generation += 1;
 			const previousSocket = socket;
 			socket = null;
-			previousSocket?.close(1_000, "Reconnect requested");
-			publish({ status: "idle", reconnectAttempt: 0 });
+			previousSocket?.close(WEB_SOCKET_CLOSE_NORMAL, "Reconnect requested");
+			publish({ status: MANAGED_WEB_SOCKET_STATUS_IDLE, reconnectAttempt: 0 });
 			openSocket(false);
 		},
-		stop(code = 1_000, reason = "Client stopped") {
+		stop(code = WEB_SOCKET_CLOSE_NORMAL, reason = "Client stopped") {
 			stopped = true;
 			clearReconnectTimer();
 			generation += 1;
 			const previousSocket = socket;
 			socket = null;
 			previousSocket?.close(code, reason);
-			publish({ status: "stopped", reconnectAttempt: 0 });
+			publish({ status: MANAGED_WEB_SOCKET_STATUS_STOPPED, reconnectAttempt: 0 });
 		},
 		send(data) {
 			if (!socket || socket.readyState !== WEB_SOCKET_OPEN_STATE) return false;

@@ -1,3 +1,7 @@
+import { HTTP_HEADER_ORIGIN } from "../http/httpProtocolConstants";
+
+const SAME_ORIGIN_FETCH_SITE = "same-origin";
+
 /** Ошибка возникает до JSON parsing, когда transport body превысил заданный предел. */
 export class ErrorReportBodyTooLargeError extends Error {
 	public constructor() {
@@ -8,11 +12,11 @@ export class ErrorReportBodyTooLargeError extends Error {
 
 /** Проверяет browser same-origin signals без доверия к произвольному Referer. */
 export function isSameOriginErrorReportRequest(request: Request): boolean {
-	const origin = request.headers.get("origin");
+	const origin = request.headers.get(HTTP_HEADER_ORIGIN);
 	const fetchSite = request.headers.get("sec-fetch-site");
-	if (fetchSite && fetchSite !== "same-origin") return false;
+	if (fetchSite && fetchSite !== SAME_ORIGIN_FETCH_SITE) return false;
 	if (origin && origin !== new URL(request.url).origin) return false;
-	return fetchSite === "same-origin" || origin !== null;
+	return fetchSite === SAME_ORIGIN_FETCH_SITE || origin !== null;
 }
 
 /** Считывает тело потоком и прекращает работу до JSON parsing при превышении maxBytes. */

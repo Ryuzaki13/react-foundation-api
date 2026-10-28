@@ -16,6 +16,10 @@ import {
 } from "./useODataCollectionUpdatesQuery";
 import { useODataEntity } from "./useODataEntity";
 
+const COLLECTION_STALE_TIME_MS = 1000 * 60 * 60 * 2;
+const COLLECTION_GC_TIME_MS = 1000 * 60 * 60 * 1;
+const SW_CACHE_BUST_PREFIX = "bust=";
+
 export interface ODataCollectionResult<T extends CollectionItem> {
 	items: T[];
 	keyPairs: CollectionPair[];
@@ -43,8 +47,8 @@ export function resolveODataCollectionSwCachePolicy(swCache: string, shouldBust:
 	if (!shouldBust) return swCache;
 
 	const normalized = swCache.trim().toLowerCase();
-	if (normalized === "off" || normalized.startsWith("bust=")) return swCache;
-	if (normalized.startsWith("ttl=")) return swCache.replace(/^\s*ttl=/i, "bust=");
+	if (normalized === "off" || normalized.startsWith(SW_CACHE_BUST_PREFIX)) return swCache;
+	if (normalized.startsWith("ttl=")) return swCache.replace(/^\s*ttl=/i, SW_CACHE_BUST_PREFIX);
 
 	return ODATA_COLLECTION_BUST_SW_CACHE;
 }
@@ -190,11 +194,11 @@ export function useODataCollectionQuery<T extends CollectionItem>(odata: ODataCo
 		/**
 		 * Клиентский кеш можно держать не долго, чтобы он мог чаще дергать SW
 		 */
-		staleTime: 1000 * 60 * 60 * 2,
+		staleTime: COLLECTION_STALE_TIME_MS,
 		/**
 		 * Если справочник не используется более часа, то можно из памяти выгрузить.
 		 */
-		gcTime: 1000 * 60 * 60 * 1,
+		gcTime: COLLECTION_GC_TIME_MS,
 		/**
 		 * Сортировка является представлением observer, а не identity Query.
 		 * TanStack мемоизирует select-проекцию и не сохраняет её в общий cache.

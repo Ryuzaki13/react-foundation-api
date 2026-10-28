@@ -9,6 +9,14 @@ import {
 	resolveRequestMethod,
 	validateODataOperation
 } from "./odataFetchFnHelpers";
+import {
+	ODATA_OPERATION_CREATE,
+	ODATA_OPERATION_UPDATE,
+	ODATA_OPERATION_DELETE,
+	ODATA_OPERATION_READ,
+	ODATA_OPERATION_QUERY,
+	ODATA_OPERATION_FUNCTION_IMPORT
+} from "./odataOperationConstants";
 import { parseODataResponseByMetadata } from "./parseODataResponseByMetadata";
 import { isNoContentResponse, resolveODataBaseUrl } from "./transport/fetch";
 import { getODataMetadataData } from "./useODataMetadataQuery";
@@ -106,8 +114,8 @@ export type ODataFunctionImportFnOptions<
 	params: WrapODataParameters<P>;
 };
 
-export type ODataSingleOperationMethod = Exclude<ODataOperationMethod, "query">;
-export type ODataArrayOperationMethod = "query";
+export type ODataSingleOperationMethod = Exclude<ODataOperationMethod, typeof ODATA_OPERATION_QUERY>;
+export type ODataArrayOperationMethod = typeof ODATA_OPERATION_QUERY;
 
 export type ODataSingleFetchFnRequest<
 	M extends ODataSingleOperationMethod,
@@ -115,15 +123,15 @@ export type ODataSingleFetchFnRequest<
 	O = I,
 	T = I,
 	P extends UnwrappedODataParameters = UnwrappedODataParameters
-> = M extends "create"
+> = M extends typeof ODATA_OPERATION_CREATE
 	? ODataCreateFnOptions<I, O, T>
-	: M extends "update"
+	: M extends typeof ODATA_OPERATION_UPDATE
 		? ODataUpdateFnOptions<I, O, T, P>
-		: M extends "delete"
+		: M extends typeof ODATA_OPERATION_DELETE
 			? ODataDeleteFnOptions<I, O, P>
-			: M extends "read"
+			: M extends typeof ODATA_OPERATION_READ
 				? ODataReadFnOptions<I, O, P>
-				: M extends "fi"
+				: M extends typeof ODATA_OPERATION_FUNCTION_IMPORT
 					? ODataFunctionImportFnOptions<I, O, P>
 					: never;
 
@@ -133,19 +141,19 @@ export type ODataFetchFnRequest<
 	O = I,
 	T = I,
 	P extends UnwrappedODataParameters = UnwrappedODataParameters
-> = M extends "query"
+> = M extends typeof ODATA_OPERATION_QUERY
 	? ODataQueryFnOptions<I, O, P>
 	: M extends ODataSingleOperationMethod
 		? ODataSingleFetchFnRequest<M, I, O, T, P>
 		: never;
 
 export type ODataFetchFnImplementationArgs =
-	| [method: "create", opts: ODataCreateFnOptions<unknown, unknown, unknown>]
-	| [method: "update", opts: ODataUpdateFnOptions<unknown, unknown, unknown, UnwrappedODataParameters>]
-	| [method: "delete", opts: ODataDeleteFnOptions<unknown, unknown, UnwrappedODataParameters>]
-	| [method: "read", opts: ODataReadFnOptions<unknown, unknown, UnwrappedODataParameters>]
-	| [method: "query", opts: ODataQueryFnOptions<unknown, unknown, UnwrappedODataParameters>]
-	| [method: "fi", opts: ODataFunctionImportFnOptions<unknown, unknown, UnwrappedODataParameters>];
+	| [method: typeof ODATA_OPERATION_CREATE, opts: ODataCreateFnOptions<unknown, unknown, unknown>]
+	| [method: typeof ODATA_OPERATION_UPDATE, opts: ODataUpdateFnOptions<unknown, unknown, unknown, UnwrappedODataParameters>]
+	| [method: typeof ODATA_OPERATION_DELETE, opts: ODataDeleteFnOptions<unknown, unknown, UnwrappedODataParameters>]
+	| [method: typeof ODATA_OPERATION_READ, opts: ODataReadFnOptions<unknown, unknown, UnwrappedODataParameters>]
+	| [method: typeof ODATA_OPERATION_QUERY, opts: ODataQueryFnOptions<unknown, unknown, UnwrappedODataParameters>]
+	| [method: typeof ODATA_OPERATION_FUNCTION_IMPORT, opts: ODataFunctionImportFnOptions<unknown, unknown, UnwrappedODataParameters>];
 
 export type ODataFetchFnRunnerResult<TData> = { data: TData; totalCount?: number };
 export type ODataFetchFnRunner<TData> = ({
@@ -267,7 +275,7 @@ export function odataFetchFn(...args: ODataFetchFnImplementationArgs): ODataFetc
 
 		const body = "body" in opts ? resolveRequestBody(opts.body, method) : undefined;
 		const requestMethod = resolveRequestMethod(target, method);
-		const isPlainEntityQuery = method === "query" && !("result" in target);
+		const isPlainEntityQuery = method === ODATA_OPERATION_QUERY && !("result" in target);
 
 		if (__DEV__ && isPlainEntityQuery && Object.keys(params).length > 0) {
 			console.warn(
@@ -280,7 +288,7 @@ export function odataFetchFn(...args: ODataFetchFnImplementationArgs): ODataFetc
 		const queryOptions = swCache ? { ...options, baseUrl, swCache } : { ...options, baseUrl };
 		const requestInit = { ...init, method: requestMethod, body, signal };
 
-		if (method === "query") {
+		if (method === ODATA_OPERATION_QUERY) {
 			const response = await odataFetch<unknown, unknown[]>(targetPath, queryOptions, requestInit);
 
 			if (isNoContentResponse(response)) {
@@ -354,7 +362,7 @@ export function odataCreateFn<I, O = I, T = I>(
 	opts: ODataCreateFnOptions<I, O, T> & { transform: ODataSingleTransform<I, O> }
 ): ODataFetchFnRunner<O>;
 export function odataCreateFn<I, O = I, T = I>(opts: ODataCreateFnOptions<I, O, T>) {
-	return odataFetchFn<I, O, T, never, "create">("create", opts);
+	return odataFetchFn<I, O, T, never, typeof ODATA_OPERATION_CREATE>(ODATA_OPERATION_CREATE, opts);
 }
 
 /**
@@ -401,7 +409,7 @@ export function odataUpdateFn<I, O = I, T = I, P extends UnwrappedODataParameter
 export function odataUpdateFn<I, O = I, T = I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
 	opts: ODataUpdateFnOptions<I, O, T, P>
 ) {
-	return odataFetchFn<I, O, T, P, "update">("update", opts);
+	return odataFetchFn<I, O, T, P, typeof ODATA_OPERATION_UPDATE>(ODATA_OPERATION_UPDATE, opts);
 }
 
 /**
@@ -446,7 +454,7 @@ export function odataDeleteFn<I, O = I, T = I, P extends UnwrappedODataParameter
 export function odataDeleteFn<I, O = I, T = I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
 	opts: ODataDeleteFnOptions<I, O, P>
 ) {
-	return odataFetchFn<I, O, T, P, "delete">("delete", opts);
+	return odataFetchFn<I, O, T, P, typeof ODATA_OPERATION_DELETE>(ODATA_OPERATION_DELETE, opts);
 }
 
 /**
@@ -492,7 +500,7 @@ export function odataReadFn<I, O = I, T = I, P extends UnwrappedODataParameters 
 export function odataReadFn<I, O = I, T = I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
 	opts: ODataReadFnOptions<I, O, P>
 ) {
-	return odataFetchFn<I, O, T, P, "read">("read", opts);
+	return odataFetchFn<I, O, T, P, typeof ODATA_OPERATION_READ>(ODATA_OPERATION_READ, opts);
 }
 
 /**
@@ -549,7 +557,7 @@ export function odataQueryFn<I, O = I, P extends UnwrappedODataParameters = Unwr
 	opts: ODataQueryFnOptions<I, I, P> & { transform?: undefined }
 ): ODataFetchFnRunner<I[]>;
 export function odataQueryFn<I, O = I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(opts: ODataQueryFnOptions<I, O, P>) {
-	return odataFetchFn<I, O, void, P, "query">("query", opts);
+	return odataFetchFn<I, O, void, P, typeof ODATA_OPERATION_QUERY>(ODATA_OPERATION_QUERY, opts);
 }
 
 /**
@@ -599,5 +607,5 @@ export function odataFunctionImportFn<I, O = I, T = I, P extends UnwrappedODataP
 export function odataFunctionImportFn<I, O = I, T = I, P extends UnwrappedODataParameters = UnwrappedODataParameters>(
 	opts: ODataFunctionImportFnOptions<I, O, P>
 ) {
-	return odataFetchFn<I, O, T, P, "fi">("fi", opts);
+	return odataFetchFn<I, O, T, P, typeof ODATA_OPERATION_FUNCTION_IMPORT>(ODATA_OPERATION_FUNCTION_IMPORT, opts);
 }

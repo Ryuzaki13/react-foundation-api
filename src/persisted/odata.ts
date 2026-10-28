@@ -1,5 +1,13 @@
 import { type ODataFetchFnRequest, type ODataFetchOptions } from "../odata";
 import { odataFetchFn } from "../odata/odataFetchFn";
+import {
+	ODATA_OPERATION_QUERY,
+	ODATA_OPERATION_CREATE,
+	ODATA_OPERATION_UPDATE,
+	ODATA_OPERATION_DELETE,
+	ODATA_OPERATION_READ,
+	ODATA_OPERATION_FUNCTION_IMPORT
+} from "../odata/odataOperationConstants";
 import { BaseURLType } from "../odata/transport";
 
 import { PersistedMutationOperation, PersistedQueryOperation } from "./types";
@@ -16,18 +24,18 @@ type PersistedODataRequest<
 	TBody = unknown,
 	TResponse = TBody,
 	TEntity = PersistedODataEntity<TResponse>
-> = TMethod extends "query"
-	? ODataFetchFnRequest<"query", TEntity, TEntity, TEntity>
-	: TMethod extends "create"
-		? ODataFetchFnRequest<"create", TResponse, TResponse, TBody>
-		: TMethod extends "update"
-			? ODataFetchFnRequest<"update", TResponse, TResponse, TBody>
-			: TMethod extends "delete"
-				? ODataFetchFnRequest<"delete", TResponse, TResponse, TEntity>
-				: TMethod extends "read"
-					? ODataFetchFnRequest<"read", TResponse, TResponse, TEntity>
-					: TMethod extends "fi"
-						? ODataFetchFnRequest<"fi", TResponse, TResponse, TEntity>
+> = TMethod extends typeof ODATA_OPERATION_QUERY
+	? ODataFetchFnRequest<typeof ODATA_OPERATION_QUERY, TEntity, TEntity, TEntity>
+	: TMethod extends typeof ODATA_OPERATION_CREATE
+		? ODataFetchFnRequest<typeof ODATA_OPERATION_CREATE, TResponse, TResponse, TBody>
+		: TMethod extends typeof ODATA_OPERATION_UPDATE
+			? ODataFetchFnRequest<typeof ODATA_OPERATION_UPDATE, TResponse, TResponse, TBody>
+			: TMethod extends typeof ODATA_OPERATION_DELETE
+				? ODataFetchFnRequest<typeof ODATA_OPERATION_DELETE, TResponse, TResponse, TEntity>
+				: TMethod extends typeof ODATA_OPERATION_READ
+					? ODataFetchFnRequest<typeof ODATA_OPERATION_READ, TResponse, TResponse, TEntity>
+					: TMethod extends typeof ODATA_OPERATION_FUNCTION_IMPORT
+						? ODataFetchFnRequest<typeof ODATA_OPERATION_FUNCTION_IMPORT, TResponse, TResponse, TEntity>
 						: never;
 
 /**
@@ -60,7 +68,11 @@ interface PersistedODataReadOperationOptions<TScope, TArgs, TResponse, TResult> 
 	buildOptions?: (scope: TScope, args: TArgs) => ODataFetchOptions<PersistedODataEntity<TResponse>> | undefined;
 	buildInit?: (scope: TScope, args: TArgs) => Omit<RequestInit, "signal" | "method" | "body">;
 	transform?: (data: TResponse, context: { scope: TScope; args: TArgs }) => TResult;
-	executor?: PersistedODataExecutor<"query" | "read", PersistedODataEntity<TResponse>, TResponse>;
+	executor?: PersistedODataExecutor<
+		typeof ODATA_OPERATION_QUERY | typeof ODATA_OPERATION_READ,
+		PersistedODataEntity<TResponse>,
+		TResponse
+	>;
 	staleTime?: number;
 	gcTime?: number;
 	meta?: QueryMeta;
@@ -85,10 +97,10 @@ type PersistedODataCreateOperationOptions<TScope, TInput, TBody, TResponse, TRes
 	TResponse,
 	TResult
 > & {
-	method: "create";
+	method: typeof ODATA_OPERATION_CREATE;
 	buildParams?: never;
 	bodyMapper: (scope: TScope, input: TInput) => TBody;
-	executor?: PersistedODataExecutor<"create", TBody, TResponse>;
+	executor?: PersistedODataExecutor<typeof ODATA_OPERATION_CREATE, TBody, TResponse>;
 };
 
 type PersistedODataUpdateOperationOptions<TScope, TInput, TBody, TResponse, TResult> = PersistedODataWriteOperationSharedOptions<
@@ -97,10 +109,10 @@ type PersistedODataUpdateOperationOptions<TScope, TInput, TBody, TResponse, TRes
 	TResponse,
 	TResult
 > & {
-	method: "update";
+	method: typeof ODATA_OPERATION_UPDATE;
 	buildParams: (scope: TScope, input: TInput) => WrappedODataParameters;
 	bodyMapper: (scope: TScope, input: TInput) => TBody;
-	executor?: PersistedODataExecutor<"update", TBody, TResponse>;
+	executor?: PersistedODataExecutor<typeof ODATA_OPERATION_UPDATE, TBody, TResponse>;
 };
 
 type PersistedODataDeleteOperationOptions<TScope, TInput, TResponse, TResult> = PersistedODataWriteOperationSharedOptions<
@@ -109,10 +121,10 @@ type PersistedODataDeleteOperationOptions<TScope, TInput, TResponse, TResult> = 
 	TResponse,
 	TResult
 > & {
-	method: "delete";
+	method: typeof ODATA_OPERATION_DELETE;
 	buildParams: (scope: TScope, input: TInput) => WrappedODataParameters;
 	bodyMapper?: never;
-	executor?: PersistedODataExecutor<"delete", never, TResponse>;
+	executor?: PersistedODataExecutor<typeof ODATA_OPERATION_DELETE, never, TResponse>;
 };
 
 type PersistedODataWriteOperationOptions<TScope, TInput, TBody, TResponse, TResult> =
@@ -134,11 +146,11 @@ async function executePersistedOData<TMethod extends ODataOperationMethod, TBody
 	}
 
 	switch (method) {
-		case "query": {
+		case ODATA_OPERATION_QUERY: {
 			const response = await odataFetchFn<PersistedODataEntity<TResponse>, PersistedODataEntity<TResponse>>(
-				"query",
+				ODATA_OPERATION_QUERY,
 				request as ODataFetchFnRequest<
-					"query",
+					typeof ODATA_OPERATION_QUERY,
 					PersistedODataEntity<TResponse>,
 					PersistedODataEntity<TResponse>,
 					PersistedODataEntity<TResponse>
@@ -152,10 +164,10 @@ async function executePersistedOData<TMethod extends ODataOperationMethod, TBody
 				totalCount?: number;
 			};
 		}
-		case "create": {
-			const response = await odataFetchFn<TResponse, TBody, "create">(
-				"create",
-				request as ODataFetchFnRequest<"create", TResponse, TResponse, TBody> & {
+		case ODATA_OPERATION_CREATE: {
+			const response = await odataFetchFn<TResponse, TBody, typeof ODATA_OPERATION_CREATE>(
+				ODATA_OPERATION_CREATE,
+				request as ODataFetchFnRequest<typeof ODATA_OPERATION_CREATE, TResponse, TResponse, TBody> & {
 					transform?: undefined;
 				}
 			)(context);
@@ -165,10 +177,10 @@ async function executePersistedOData<TMethod extends ODataOperationMethod, TBody
 				totalCount?: number;
 			};
 		}
-		case "update": {
-			const response = await odataFetchFn<TResponse, TBody, "update">(
-				"update",
-				request as ODataFetchFnRequest<"update", TResponse, TResponse, TBody> & {
+		case ODATA_OPERATION_UPDATE: {
+			const response = await odataFetchFn<TResponse, TBody, typeof ODATA_OPERATION_UPDATE>(
+				ODATA_OPERATION_UPDATE,
+				request as ODataFetchFnRequest<typeof ODATA_OPERATION_UPDATE, TResponse, TResponse, TBody> & {
 					transform?: undefined;
 				}
 			)(context);
@@ -178,10 +190,10 @@ async function executePersistedOData<TMethod extends ODataOperationMethod, TBody
 				totalCount?: number;
 			};
 		}
-		case "delete": {
-			const response = await odataFetchFn<TResponse, PersistedODataEntity<TResponse>, "delete">(
-				"delete",
-				request as ODataFetchFnRequest<"delete", TResponse, TResponse, PersistedODataEntity<TResponse>> & {
+		case ODATA_OPERATION_DELETE: {
+			const response = await odataFetchFn<TResponse, PersistedODataEntity<TResponse>, typeof ODATA_OPERATION_DELETE>(
+				ODATA_OPERATION_DELETE,
+				request as ODataFetchFnRequest<typeof ODATA_OPERATION_DELETE, TResponse, TResponse, PersistedODataEntity<TResponse>> & {
 					transform?: undefined;
 				}
 			)(context);
@@ -191,10 +203,10 @@ async function executePersistedOData<TMethod extends ODataOperationMethod, TBody
 				totalCount?: number;
 			};
 		}
-		case "read": {
-			const response = await odataFetchFn<TResponse, PersistedODataEntity<TResponse>, "read">(
-				"read",
-				request as ODataFetchFnRequest<"read", TResponse, TResponse, PersistedODataEntity<TResponse>> & {
+		case ODATA_OPERATION_READ: {
+			const response = await odataFetchFn<TResponse, PersistedODataEntity<TResponse>, typeof ODATA_OPERATION_READ>(
+				ODATA_OPERATION_READ,
+				request as ODataFetchFnRequest<typeof ODATA_OPERATION_READ, TResponse, TResponse, PersistedODataEntity<TResponse>> & {
 					transform?: undefined;
 				}
 			)(context);
@@ -204,10 +216,15 @@ async function executePersistedOData<TMethod extends ODataOperationMethod, TBody
 				totalCount?: number;
 			};
 		}
-		case "fi": {
-			const response = await odataFetchFn<TResponse, PersistedODataEntity<TResponse>, "fi">(
-				"fi",
-				request as ODataFetchFnRequest<"fi", TResponse, TResponse, PersistedODataEntity<TResponse>> & {
+		case ODATA_OPERATION_FUNCTION_IMPORT: {
+			const response = await odataFetchFn<TResponse, PersistedODataEntity<TResponse>, typeof ODATA_OPERATION_FUNCTION_IMPORT>(
+				ODATA_OPERATION_FUNCTION_IMPORT,
+				request as ODataFetchFnRequest<
+					typeof ODATA_OPERATION_FUNCTION_IMPORT,
+					TResponse,
+					TResponse,
+					PersistedODataEntity<TResponse>
+				> & {
 					transform?: undefined;
 				}
 			)(context);
@@ -243,8 +260,8 @@ export function createPersistedODataQueryOperation<TScope, TArgs, TResponse, TRe
 		gcTime: options.gcTime,
 		meta: options.meta,
 		execute: async ({ scope, args, client, signal }) => {
-			const response = await executePersistedOData<"query", PersistedODataEntity<TResponse>, TResponse>(
-				"query",
+			const response = await executePersistedOData<typeof ODATA_OPERATION_QUERY, PersistedODataEntity<TResponse>, TResponse>(
+				ODATA_OPERATION_QUERY,
 				{
 					odata: options.odata,
 					params: options.buildParams?.(scope, args),
@@ -253,7 +270,7 @@ export function createPersistedODataQueryOperation<TScope, TArgs, TResponse, TRe
 						...options.buildOptions?.(scope, args)
 					},
 					init: options.buildInit?.(scope, args)
-				} as PersistedODataRequest<"query", PersistedODataEntity<TResponse>, TResponse>,
+				} as PersistedODataRequest<typeof ODATA_OPERATION_QUERY, PersistedODataEntity<TResponse>, TResponse>,
 				{ client, signal },
 				options.executor
 			);
@@ -276,8 +293,8 @@ export function createPersistedODataReadOperation<TScope, TArgs, TResponse, TRes
 		gcTime: options.gcTime,
 		meta: options.meta,
 		execute: async ({ scope, args, client, signal }) => {
-			const response = await executePersistedOData<"read", PersistedODataEntity<TResponse>, TResponse>(
-				"read",
+			const response = await executePersistedOData<typeof ODATA_OPERATION_READ, PersistedODataEntity<TResponse>, TResponse>(
+				ODATA_OPERATION_READ,
 				{
 					odata: options.odata,
 					params: options.buildParams?.(scope, args),
@@ -286,7 +303,7 @@ export function createPersistedODataReadOperation<TScope, TArgs, TResponse, TRes
 						...options.buildOptions?.(scope, args)
 					},
 					init: options.buildInit?.(scope, args)
-				} as PersistedODataRequest<"read", PersistedODataEntity<TResponse>, TResponse>,
+				} as PersistedODataRequest<typeof ODATA_OPERATION_READ, PersistedODataEntity<TResponse>, TResponse>,
 				{ client, signal },
 				options.executor
 			);
@@ -322,8 +339,8 @@ export function createPersistedODataMutationOperation<TScope, TInput, TResponse,
 		cacheStrategy: options.cacheStrategy,
 		execute: async ({ scope, input, client }) => {
 			const response =
-				options.method === "delete"
-					? await executePersistedOData<"delete", never, TResponse>(
+				options.method === ODATA_OPERATION_DELETE
+					? await executePersistedOData<typeof ODATA_OPERATION_DELETE, never, TResponse>(
 							options.method,
 							{
 								odata: options.odata,
@@ -333,12 +350,12 @@ export function createPersistedODataMutationOperation<TScope, TInput, TResponse,
 									...options.buildOptions?.(scope, input)
 								},
 								init: options.buildInit?.(scope, input)
-							} as PersistedODataRequest<"delete", never, TResponse, PersistedODataEntity<TResponse>>,
+							} as PersistedODataRequest<typeof ODATA_OPERATION_DELETE, never, TResponse, PersistedODataEntity<TResponse>>,
 							{ client },
 							options.executor
 						)
-					: options.method === "update"
-						? await executePersistedOData<"update", TBody, TResponse>(
+					: options.method === ODATA_OPERATION_UPDATE
+						? await executePersistedOData<typeof ODATA_OPERATION_UPDATE, TBody, TResponse>(
 								options.method,
 								{
 									odata: options.odata,
@@ -349,11 +366,16 @@ export function createPersistedODataMutationOperation<TScope, TInput, TResponse,
 										...options.buildOptions?.(scope, input)
 									},
 									init: options.buildInit?.(scope, input)
-								} as PersistedODataRequest<"update", TBody, TResponse, PersistedODataEntity<TResponse>>,
+								} as PersistedODataRequest<
+									typeof ODATA_OPERATION_UPDATE,
+									TBody,
+									TResponse,
+									PersistedODataEntity<TResponse>
+								>,
 								{ client },
 								options.executor
 							)
-						: await executePersistedOData<"create", TBody, TResponse>(
+						: await executePersistedOData<typeof ODATA_OPERATION_CREATE, TBody, TResponse>(
 								options.method,
 								{
 									odata: options.odata,
@@ -363,7 +385,12 @@ export function createPersistedODataMutationOperation<TScope, TInput, TResponse,
 										...options.buildOptions?.(scope, input)
 									},
 									init: options.buildInit?.(scope, input)
-								} as PersistedODataRequest<"create", TBody, TResponse, PersistedODataEntity<TResponse>>,
+								} as PersistedODataRequest<
+									typeof ODATA_OPERATION_CREATE,
+									TBody,
+									TResponse,
+									PersistedODataEntity<TResponse>
+								>,
 								{ client },
 								options.executor
 							);

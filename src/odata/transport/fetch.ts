@@ -1,12 +1,50 @@
 import { logError } from "@ryuzaki13/react-foundation-lib/utils";
 import { asRecord, isRecord, isSafe } from "@ryuzaki13/react-foundation-lib/validators";
 
+import {
+	HTTP_METHOD_GET,
+	HTTP_METHOD_POST,
+	HTTP_METHOD_PUT,
+	HTTP_METHOD_DELETE,
+	HTTP_HEADER_CONTENT_TYPE,
+	HTTP_HEADER_ACCEPT,
+	HTTP_CONTENT_TYPE_JSON,
+	HTTP_CONTENT_TYPE_HTML,
+	HTTP_HEADER_SW_CACHE,
+	HTTP_STATUS_NO_CONTENT,
+	HTTP_STATUS_RESET_CONTENT,
+	HTTP_STATUS_UNAUTHORIZED,
+	HTTP_STATUS_FORBIDDEN
+} from "../../http/httpProtocolConstants";
 import { normalizeODataServiceName, resolveODataBaseUrl, resolveODataSapClient } from "../odataProjectAdapter";
 
-import { reportUnexpectedHtmlResponse } from "./errorReport";
+import { ODATA_ERROR_SOURCE_PARSE_RESPONSE, ODATA_ERROR_SOURCE_BUILD_HTTP_ERROR, reportUnexpectedHtmlResponse } from "./errorReport";
+import { ODATA_BASE_URL_DEFAULT, ODATA_BASE_URL_DP0, ODATA_BASE_URL_CONFIG, ODATA_BASE_URL_DIRECT } from "./odataBaseUrlConstants";
+import {
+	ODATA_READ_HTTP_METHODS,
+	ODATA_HEADER_SERVICE_VERSION,
+	ODATA_HEADER_MAX_SERVICE_VERSION,
+	ODATA_SERVICE_VERSION,
+	SAP_HEADER_LANGUAGE,
+	SAP_REQUEST_LANGUAGE,
+	SAP_HEADER_CONTEXT_ID_ACCEPT,
+	SAP_CONTEXT_ID_ACCEPT,
+	SAP_HEADER_CSRF_TOKEN,
+	SAP_HEADER_CLIENT,
+	SAP_PATH_PREFIX,
+	SAP_DP0_PATH_PREFIX
+} from "./odataTransportConstants";
 import { isSsoForm, recoverSsoSession, SsoForm, SsoRequiredError } from "./SsoRequiredError";
 import { BaseURLType, FetchErrorReportContext, RequestInitType } from "./types";
 import { BaseUrlMap, getInputUrl, normalizeRelativePath } from "./url";
+
+const SAP_DP0_CLIENT = "300";
+const ODATA_REQUEST_CREDENTIALS = "include";
+const ODATA_REQUEST_REDIRECT = "manual";
+const ODATA_CONTENT_TYPE_JSON = "application/odata+json";
+const NETWORK_ERROR_RESPONSE_STATUS = 0;
+const SSO_REQUIRED_MESSAGE = "Требуется повторная аутентификация";
+const UNEXPECTED_HTML_RESPONSE_MESSAGE = "Unexpected HTML response from OData endpoint";
 
 const csrfTokenCache = new Map<string, string>();
 const csrfFetchInProgressCache = new Map<string, Promise<string>>();
@@ -16,18 +54,18 @@ let ssoBlockedError: SsoRequiredError | null = null;
 export { normalizeODataServiceName, resolveODataBaseUrl };
 
 function isSapRequest(input: RequestInfo, baseUrlType: BaseURLType) {
-	if (baseUrlType !== "") return true;
+	if (baseUrlType !== ODATA_BASE_URL_DIRECT) return true;
 
 	const path = normalizeRelativePath(getInputUrl(input));
-	return path.startsWith("/sap/") || path.startsWith("/sap-dp0/");
+	return path.startsWith(SAP_PATH_PREFIX) || path.startsWith(SAP_DP0_PATH_PREFIX);
 }
 
 function getSapClient(input: RequestInfo, baseUrlType: BaseURLType): string | null {
 	if (__DEV__ || __PREVIEW__) {
 		if (!isSapRequest(input, baseUrlType)) return null;
-		if (baseUrlType === "odataDp0") return "300";
-		if (baseUrlType === "" && normalizeRelativePath(getInputUrl(input)).startsWith("/sap-dp0/")) {
-			return "300";
+		if (baseUrlType === ODATA_BASE_URL_DP0) return SAP_DP0_CLIENT;
+		if (baseUrlType === ODATA_BASE_URL_DIRECT && normalizeRelativePath(getInputUrl(input)).startsWith(SAP_DP0_PATH_PREFIX)) {
+			return SAP_DP0_CLIENT;
 		}
 		return `${__SAP_CLIENT__}`;
 	}
@@ -116,7 +154,7 @@ async function recoverSsoSessionAndRetry<T>(error: SsoRequiredError, retry: () =
 }
 
 function resolveCsrfScope(input: RequestInfo, baseUrlType: BaseURLType, sapClient: string | null) {
-	if (baseUrlType === "config") {
+	if (baseUrlType === ODATA_BASE_URL_CONFIG) {
 		return {
 			cacheKey: `${__APP_ID__}:${sapClient ?? ""}`,
 			fetchUrl: "/Statistics"
@@ -143,36 +181,36 @@ async function getCsrfToken(input: RequestInfo, baseUrlType: BaseURLType, sapCli
 	const inflightToken = csrfFetchInProgressCache.get(scope.cacheKey);
 	if (inflightToken) return inflightToken;
 
-	const headers = new Headers({ "x-csrf-token": "Fetch" });
-	headers.set("sap-language", "ru");
-	headers.set("sap-contextid-accept", "header");
-	headers.set("Accept-Language", "ru");
+	const headers = new Headers({ [SAP_HEADER_CSRF_TOKEN]: "Fetch" });
+	headers.set(SAP_HEADER_LANGUAGE, SAP_REQUEST_LANGUAGE);
+	headers.set(SAP_HEADER_CONTEXT_ID_ACCEPT, SAP_CONTEXT_ID_ACCEPT);
+	headers.set("Accept-Language", SAP_REQUEST_LANGUAGE);
 	if (sapClient) {
-		headers.set("sap-client", sapClient);
+		headers.set(SAP_HEADER_CLIENT, sapClient);
 	}
 
 	const baseUrl = (baseUrlType && BaseUrlMap[baseUrlType]) ?? "";
 	const tokenPromise = fetch(baseUrl + scope.fetchUrl, {
-		method: "GET",
+		method: HTTP_METHOD_GET,
 		headers,
-		credentials: "include",
-		redirect: "manual"
+		credentials: ODATA_REQUEST_CREDENTIALS,
+		redirect: ODATA_REQUEST_REDIRECT
 	})
 		.then(async (res) => {
 			if (isSsoRedirectResponse(res)) {
-				throw new SsoRequiredError("Требуется повторная аутентификация", undefined, baseUrl + scope.fetchUrl);
+				throw new SsoRequiredError(SSO_REQUIRED_MESSAGE, undefined, baseUrl + scope.fetchUrl);
 			}
 
 			if (!res.ok) throw new Error("Не удалось получить CSRF-токен");
 
-			const token = res.headers.get("x-csrf-token");
+			const token = res.headers.get(SAP_HEADER_CSRF_TOKEN);
 			if (!token) {
-				const contentType = (res.headers.get("Content-Type") || "").toLowerCase();
+				const contentType = (res.headers.get(HTTP_HEADER_CONTENT_TYPE) || "").toLowerCase();
 				const text = await res.text();
 				if (looksLikeHtmlResponse(contentType, text)) {
 					const form = extractFormFromHtml(text);
 					if (isSsoForm(form)) {
-						throw new SsoRequiredError("Требуется повторная аутентификация", form, baseUrl + scope.fetchUrl);
+						throw new SsoRequiredError(SSO_REQUIRED_MESSAGE, form, baseUrl + scope.fetchUrl);
 					}
 				}
 
@@ -206,11 +244,11 @@ function extractFormFromHtml(html: string): SsoForm | undefined {
 	try {
 		if (typeof DOMParser !== "undefined") {
 			const parser = new DOMParser();
-			const doc = parser.parseFromString(html, "text/html");
+			const doc = parser.parseFromString(html, HTTP_CONTENT_TYPE_HTML);
 			const form = doc.querySelector("form");
 			if (form) {
 				const action = form.getAttribute("action") || (typeof window !== "undefined" ? window.location.href : "");
-				const method = (form.getAttribute("method") || "GET").toUpperCase();
+				const method = (form.getAttribute("method") || HTTP_METHOD_GET).toUpperCase();
 				const inputs: Record<string, string> = {};
 				form.querySelectorAll<HTMLInputElement>("input[name]").forEach((i) => {
 					inputs[i.name] = i.value ?? "";
@@ -227,7 +265,7 @@ function extractFormFromHtml(html: string): SsoForm | undefined {
 
 	const [, formAttributes = "", formBody = ""] = formMatch;
 	const action = extractHtmlAttribute(formAttributes, "action") || (typeof window !== "undefined" ? window.location.href : "");
-	const method = (extractHtmlAttribute(formAttributes, "method") || "GET").toUpperCase();
+	const method = (extractHtmlAttribute(formAttributes, "method") || HTTP_METHOD_GET).toUpperCase();
 	const inputs: Record<string, string> = {};
 	const inputTagPattern = /<input\b([^>]*)>/gi;
 
@@ -243,7 +281,7 @@ function extractFormFromHtml(html: string): SsoForm | undefined {
 }
 
 function looksLikeHtmlResponse(contentType: string, text: string) {
-	return contentType.includes("text/html") || /<html/i.test(text) || /<form/i.test(text);
+	return contentType.includes(HTTP_CONTENT_TYPE_HTML) || /<html/i.test(text) || /<form/i.test(text);
 }
 
 function stripODataMetadata(value: unknown) {
@@ -282,14 +320,17 @@ export function isNoContentResponse(value: unknown): value is typeof NO_CONTENT_
 }
 
 async function parseResponse<T>(res: Response, reportContext?: FetchErrorReportContext): Promise<{ data: T; totalCount?: number }> {
-	if (res.status === 204 || res.status === 205 /*|| res.headers.get("Content-Length") === "0"*/) {
+	if (
+		res.status === HTTP_STATUS_NO_CONTENT ||
+		res.status === HTTP_STATUS_RESET_CONTENT /*|| res.headers.get("Content-Length") === "0"*/
+	) {
 		return { data: NO_CONTENT_RESPONSE as T };
 	}
 
-	const contentType = (res.headers.get("Content-Type") || "").toLowerCase();
+	const contentType = (res.headers.get(HTTP_HEADER_CONTENT_TYPE) || "").toLowerCase();
 
 	// Если явный JSON — безопасно парсим
-	if (contentType.includes("application/json") || contentType.includes("application/odata+json")) {
+	if (contentType.includes(HTTP_CONTENT_TYPE_JSON) || contentType.includes(ODATA_CONTENT_TYPE_JSON)) {
 		const json = await res.json();
 		return extractJson<T>(json);
 	}
@@ -301,10 +342,10 @@ async function parseResponse<T>(res: Response, reportContext?: FetchErrorReportC
 	if (looksLikeHtmlResponse(contentType, text)) {
 		const form = extractFormFromHtml(text);
 		if (isSsoForm(form)) {
-			throw new SsoRequiredError("Требуется повторная аутентификация", form);
+			throw new SsoRequiredError(SSO_REQUIRED_MESSAGE, form);
 		}
-		const error = new Error("Unexpected HTML response from OData endpoint");
-		reportUnexpectedHtmlResponse(error, "fetch.parseResponse", res, text, reportContext);
+		const error = new Error(UNEXPECTED_HTML_RESPONSE_MESSAGE);
+		reportUnexpectedHtmlResponse(error, ODATA_ERROR_SOURCE_PARSE_RESPONSE, res, text, reportContext);
 		throw error;
 	}
 
@@ -369,10 +410,10 @@ function extractJsonErrorParts(payload: Record<string, unknown>) {
  * Для JSON-ответов приоритетно используются поля `error`, `details`, `message`.
  */
 async function buildHttpError(res: Response, reportContext?: FetchErrorReportContext): Promise<Error> {
-	const contentType = (res.headers.get("Content-Type") || "").toLowerCase();
+	const contentType = (res.headers.get(HTTP_HEADER_CONTENT_TYPE) || "").toLowerCase();
 
 	try {
-		if (contentType.includes("application/json") || contentType.includes("application/odata+json")) {
+		if (contentType.includes(HTTP_CONTENT_TYPE_JSON) || contentType.includes(ODATA_CONTENT_TYPE_JSON)) {
 			const payload = (await res.json()) as Record<string, unknown>;
 			const parts = extractJsonErrorParts(payload);
 
@@ -386,11 +427,11 @@ async function buildHttpError(res: Response, reportContext?: FetchErrorReportCon
 				if (looksLikeHtmlResponse(contentType, normalizedText)) {
 					const form = extractFormFromHtml(normalizedText);
 					if (isSsoForm(form)) {
-						return new SsoRequiredError("Требуется повторная аутентификация", form);
+						return new SsoRequiredError(SSO_REQUIRED_MESSAGE, form);
 					}
 
-					const error = new Error("Unexpected HTML response from OData endpoint");
-					reportUnexpectedHtmlResponse(error, "fetch.buildHttpError", res, normalizedText, reportContext);
+					const error = new Error(UNEXPECTED_HTML_RESPONSE_MESSAGE);
+					reportUnexpectedHtmlResponse(error, ODATA_ERROR_SOURCE_BUILD_HTTP_ERROR, res, normalizedText, reportContext);
 					return error;
 				}
 
@@ -408,33 +449,37 @@ function isSsoRedirectResponse(res: Response) {
 	return res.type === "opaqueredirect";
 }
 
-async function sendFetchBaseRequest(input: RequestInfo, init: RequestInitType = {}, baseUrlType: BaseURLType = "odata"): Promise<Response> {
-	const method = init.method?.toUpperCase() || "GET";
+async function sendFetchBaseRequest(
+	input: RequestInfo,
+	init: RequestInitType = {},
+	baseUrlType: BaseURLType = ODATA_BASE_URL_DEFAULT
+): Promise<Response> {
+	const method = init.method?.toUpperCase() || HTTP_METHOD_GET;
 	const headers = new Headers(init.headers);
-	const isWrite = !["GET", "HEAD"].includes(method);
+	const isWrite = !ODATA_READ_HTTP_METHODS.includes(method);
 	const hasBody = isSafe(init.body);
 	const sapRequest = isSapRequest(input, baseUrlType);
 	const sapClient = getSapClient(input, baseUrlType);
 
-	headers.set("sap-language", "ru");
+	headers.set(SAP_HEADER_LANGUAGE, SAP_REQUEST_LANGUAGE);
 	if (sapRequest) {
-		headers.set("sap-language", "ru");
-		headers.set("sap-contextid-accept", "header");
+		headers.set(SAP_HEADER_LANGUAGE, SAP_REQUEST_LANGUAGE);
+		headers.set(SAP_HEADER_CONTEXT_ID_ACCEPT, SAP_CONTEXT_ID_ACCEPT);
 	}
 	if (sapClient) {
-		headers.set("sap-client", sapClient);
+		headers.set(SAP_HEADER_CLIENT, sapClient);
 	}
 	if (isWrite && sapRequest) {
 		const token = await getCsrfToken(input, baseUrlType, sapClient);
-		headers.set("x-csrf-token", token);
+		headers.set(SAP_HEADER_CSRF_TOKEN, token);
 	}
 
-	if (!headers.has("Accept")) {
-		headers.set("Accept", "application/json");
+	if (!headers.has(HTTP_HEADER_ACCEPT)) {
+		headers.set(HTTP_HEADER_ACCEPT, HTTP_CONTENT_TYPE_JSON);
 	}
 
-	if (hasBody && isWrite && !headers.has("Content-Type")) {
-		headers.set("Content-Type", "application/json");
+	if (hasBody && isWrite && !headers.has(HTTP_HEADER_CONTENT_TYPE)) {
+		headers.set(HTTP_HEADER_CONTENT_TYPE, HTTP_CONTENT_TYPE_JSON);
 	}
 
 	const baseUrl = (baseUrlType && BaseUrlMap[baseUrlType]) ?? "";
@@ -442,34 +487,34 @@ async function sendFetchBaseRequest(input: RequestInfo, init: RequestInitType = 
 	let res = await fetch(baseUrl + url, {
 		...init,
 		headers,
-		credentials: "include",
-		redirect: sapRequest ? "manual" : init.redirect
+		credentials: ODATA_REQUEST_CREDENTIALS,
+		redirect: sapRequest ? ODATA_REQUEST_REDIRECT : init.redirect
 	});
 
 	if (sapRequest && isSsoRedirectResponse(res)) {
-		throw new SsoRequiredError("Требуется повторная аутентификация", undefined, baseUrl + url);
+		throw new SsoRequiredError(SSO_REQUIRED_MESSAGE, undefined, baseUrl + url);
 	}
 
 	// Если 401 — возможно, токен истёк, пробуем получить заново и повторить
-	if ((res.status === 401 || res.status === 403) && isWrite && sapRequest && !init.retried) {
+	if ((res.status === HTTP_STATUS_UNAUTHORIZED || res.status === HTTP_STATUS_FORBIDDEN) && isWrite && sapRequest && !init.retried) {
 		const scope = resolveCsrfScope(input, baseUrlType, sapClient);
 		csrfTokenCache.delete(scope.cacheKey);
 		csrfFetchInProgressCache.delete(scope.cacheKey);
 		const token = await getCsrfToken(input, baseUrlType, sapClient);
 
 		const retryHeaders = new Headers(headers);
-		retryHeaders.set("x-csrf-token", token);
+		retryHeaders.set(SAP_HEADER_CSRF_TOKEN, token);
 
 		res = await fetch(baseUrl + url, {
 			...init,
 			headers: retryHeaders,
-			credentials: "include",
-			redirect: "manual",
+			credentials: ODATA_REQUEST_CREDENTIALS,
+			redirect: ODATA_REQUEST_REDIRECT,
 			retried: true // кастомная метка, чтобы избежать бесконечного цикла
 		} as RequestInitType);
 
 		if (isSsoRedirectResponse(res)) {
-			throw new SsoRequiredError("Требуется повторная аутентификация", undefined, baseUrl + url);
+			throw new SsoRequiredError(SSO_REQUIRED_MESSAGE, undefined, baseUrl + url);
 		}
 	}
 
@@ -484,7 +529,7 @@ async function finalizeFetchBaseResponse(
 	sapClient: string | null
 ) {
 	if (!res.ok) {
-		if (res.status === 0) {
+		if (res.status === NETWORK_ERROR_RESPONSE_STATUS) {
 			throw new Error("Ошибка сети или CORS. Проверьте подключение и настройки сервера.");
 		}
 
@@ -494,13 +539,21 @@ async function finalizeFetchBaseResponse(
 	return res;
 }
 
-async function fetchBaseWithoutSsoRecovery(input: RequestInfo, init: RequestInitType = {}, baseUrlType: BaseURLType = "odata") {
+async function fetchBaseWithoutSsoRecovery(
+	input: RequestInfo,
+	init: RequestInitType = {},
+	baseUrlType: BaseURLType = ODATA_BASE_URL_DEFAULT
+) {
 	const sapClient = getSapClient(input, baseUrlType);
 	const res = await sendFetchBaseRequest(input, init, baseUrlType);
 	return finalizeFetchBaseResponse(res, input, init, baseUrlType, sapClient);
 }
 
-export async function fetchBase(input: RequestInfo, init: RequestInitType = {}, baseUrlType: BaseURLType = "odata"): Promise<Response> {
+export async function fetchBase(
+	input: RequestInfo,
+	init: RequestInitType = {},
+	baseUrlType: BaseURLType = ODATA_BASE_URL_DEFAULT
+): Promise<Response> {
 	const sapRequest = isSapRequest(input, baseUrlType);
 	const sapClient = getSapClient(input, baseUrlType);
 	const retry = () => fetchBaseWithoutSsoRecovery(input, { ...init, ssoRetried: true }, baseUrlType);
@@ -532,11 +585,15 @@ export async function fetchBase(input: RequestInfo, init: RequestInitType = {}, 
 	}
 }
 
-export async function fetchODataJson<T = unknown>(input: RequestInfo, init: RequestInitType = {}, baseUrlType: BaseURLType = "odata") {
+export async function fetchODataJson<T = unknown>(
+	input: RequestInfo,
+	init: RequestInitType = {},
+	baseUrlType: BaseURLType = ODATA_BASE_URL_DEFAULT
+) {
 	const headers = new Headers(init.headers);
 
-	headers.set("DataServiceVersion", "2.0");
-	headers.set("MaxDataServiceVersion", "2.0");
+	headers.set(ODATA_HEADER_SERVICE_VERSION, ODATA_SERVICE_VERSION);
+	headers.set(ODATA_HEADER_MAX_SERVICE_VERSION, ODATA_SERVICE_VERSION);
 
 	const requestInit = { ...init, headers };
 	const parseContext = { input, init, baseUrlType, sapClient: getSapClient(input, baseUrlType) };
@@ -557,7 +614,11 @@ export async function fetchODataJson<T = unknown>(input: RequestInfo, init: Requ
 	}
 }
 
-export async function fetchJson<T = unknown>(input: RequestInfo, init: RequestInitType = {}, baseUrlType: BaseURLType = "odata") {
+export async function fetchJson<T = unknown>(
+	input: RequestInfo,
+	init: RequestInitType = {},
+	baseUrlType: BaseURLType = ODATA_BASE_URL_DEFAULT
+) {
 	const response = await fetchODataJson<T>(input, init, baseUrlType);
 	return response.data;
 }
@@ -588,7 +649,7 @@ export function fetchQueryFn<R = unknown>(url: string, options: FetchQueryFnOpti
 		}
 		if (options.swCache) {
 			const headers = new Headers(initValue.headers);
-			headers.set("x-sw-cache", options.swCache);
+			headers.set(HTTP_HEADER_SW_CACHE, options.swCache);
 			initValue.headers = headers;
 		}
 
@@ -610,7 +671,7 @@ interface FetchJsonQueryFnOptions<T, R> extends FetchQueryFnBaseOptions {
  * @deprecated скоро будет замена
  */
 export function fetchJsonQueryFn<T, R = T>(url: string, options?: FetchJsonQueryFnOptions<T, R>) {
-	const baseUrlValue = options?.baseUrl || "odata";
+	const baseUrlValue = options?.baseUrl || ODATA_BASE_URL_DEFAULT;
 	const transform = options?.transform;
 
 	return async (params?: { signal: AbortSignal }) => {
@@ -621,7 +682,7 @@ export function fetchJsonQueryFn<T, R = T>(url: string, options?: FetchJsonQuery
 
 		if (options?.swCache) {
 			const headers = new Headers(initValue.headers);
-			headers.set("x-sw-cache", options.swCache);
+			headers.set(HTTP_HEADER_SW_CACHE, options.swCache);
 			initValue.headers = headers;
 		}
 
@@ -638,13 +699,17 @@ export function fetchJsonQueryFn<T, R = T>(url: string, options?: FetchJsonQuery
 /**
  * @deprecated скоро будет замена
  */
-export function fetchJsonMutationFn<T = unknown, TBody = unknown>(url: string, method: "POST" | "PUT" = "POST", baseUrl?: BaseURLType) {
+export function fetchJsonMutationFn<T = unknown, TBody = unknown>(
+	url: string,
+	method: typeof HTTP_METHOD_POST | typeof HTTP_METHOD_PUT = HTTP_METHOD_POST,
+	baseUrl?: BaseURLType
+) {
 	return async (body: TBody, signal?: AbortSignal) => {
 		return fetchJson<T>(
 			url,
 			{
 				method,
-				headers: { "Content-Type": "application/json" },
+				headers: { [HTTP_HEADER_CONTENT_TYPE]: HTTP_CONTENT_TYPE_JSON },
 				body: JSON.stringify(body),
 				signal
 			},
@@ -658,6 +723,6 @@ export function fetchJsonMutationFn<T = unknown, TBody = unknown>(url: string, m
  */
 export function fetchDeleteFn<T = unknown>(url: string, baseUrl?: BaseURLType) {
 	return async (signal?: AbortSignal) => {
-		return fetchJson<T>(url, { method: "DELETE", signal }, baseUrl);
+		return fetchJson<T>(url, { method: HTTP_METHOD_DELETE, signal }, baseUrl);
 	};
 }

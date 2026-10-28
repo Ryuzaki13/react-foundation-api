@@ -1,10 +1,19 @@
 import type { EntityColumnProperty } from "@ryuzaki13/react-foundation-lib/odata-service";
 
-export type ODataParsedRuntimeKind = "boolean" | "number" | "date" | "string";
+const ODATA_PARSED_RUNTIME_KIND_BOOLEAN = "boolean";
+const ODATA_PARSED_RUNTIME_KIND_NUMBER = "number";
+const ODATA_PARSED_RUNTIME_KIND_DATE = "date";
+const ODATA_PARSED_RUNTIME_KIND_STRING = "string";
+
+export type ODataParsedRuntimeKind =
+	| typeof ODATA_PARSED_RUNTIME_KIND_BOOLEAN
+	| typeof ODATA_PARSED_RUNTIME_KIND_NUMBER
+	| typeof ODATA_PARSED_RUNTIME_KIND_DATE
+	| typeof ODATA_PARSED_RUNTIME_KIND_STRING;
 
 export function inferODataParsedRuntimeKind(column: Pick<EntityColumnProperty, "type" | "abapBooleanLike">): ODataParsedRuntimeKind {
 	if (column.abapBooleanLike || column.type === "boolean") {
-		return "boolean";
+		return ODATA_PARSED_RUNTIME_KIND_BOOLEAN;
 	}
 
 	if (
@@ -14,14 +23,14 @@ export function inferODataParsedRuntimeKind(column: Pick<EntityColumnProperty, "
 		column.type === "decimal" ||
 		column.type === "double"
 	) {
-		return "number";
+		return ODATA_PARSED_RUNTIME_KIND_NUMBER;
 	}
 
 	if (column.type === "datetime" || column.type === "datetimeOffset" || column.type === "time") {
-		return "date";
+		return ODATA_PARSED_RUNTIME_KIND_DATE;
 	}
 
-	return "string";
+	return ODATA_PARSED_RUNTIME_KIND_STRING;
 }
 
 export function createODataParsedRuntimeKindMap(columns: EntityColumnProperty[]) {

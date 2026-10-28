@@ -1,3 +1,17 @@
+import {
+	type MANAGED_WEB_SOCKET_STATUS_CONNECTING,
+	type MANAGED_WEB_SOCKET_STATUS_IDLE,
+	type MANAGED_WEB_SOCKET_STATUS_OPEN,
+	type MANAGED_WEB_SOCKET_STATUS_RECONNECTING,
+	type MANAGED_WEB_SOCKET_STATUS_STOPPED,
+	type MANAGED_WEB_SOCKET_STATUS_UNAVAILABLE
+} from "./managedWebSocketConstants";
+import {
+	type WEB_SOCKET_ORIGIN_INVALID,
+	type WEB_SOCKET_ORIGIN_MISSING,
+	type WEB_SOCKET_ORIGIN_NOT_ALLOWED
+} from "./webSocketOriginConstants";
+
 export type WebSocketCloseEventLike = Event & {
 	readonly code: number;
 	readonly reason: string;
@@ -16,7 +30,13 @@ export type WebSocketLike = {
 	send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void;
 };
 
-export type ManagedWebSocketStatus = "idle" | "connecting" | "open" | "reconnecting" | "unavailable" | "stopped";
+export type ManagedWebSocketStatus =
+	| typeof MANAGED_WEB_SOCKET_STATUS_IDLE
+	| typeof MANAGED_WEB_SOCKET_STATUS_CONNECTING
+	| typeof MANAGED_WEB_SOCKET_STATUS_OPEN
+	| typeof MANAGED_WEB_SOCKET_STATUS_RECONNECTING
+	| typeof MANAGED_WEB_SOCKET_STATUS_UNAVAILABLE
+	| typeof MANAGED_WEB_SOCKET_STATUS_STOPPED;
 
 export type ManagedWebSocketSnapshot = {
 	readonly status: ManagedWebSocketStatus;
@@ -61,7 +81,8 @@ export type ManagedWebSocket = {
 	readonly subscribe: (listener: () => void) => () => void;
 };
 
-export type WebSocketOriginRejectionReason = "missing-origin" | "invalid-origin" | "origin-not-allowed";
+export type WebSocketOriginRejectionReason =
+	typeof WEB_SOCKET_ORIGIN_MISSING | typeof WEB_SOCKET_ORIGIN_INVALID | typeof WEB_SOCKET_ORIGIN_NOT_ALLOWED;
 
 export type WebSocketOriginDecision =
 	| { readonly allowed: true; readonly origin: string }

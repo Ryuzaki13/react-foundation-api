@@ -1,13 +1,23 @@
 import { reportTransportError } from "@ryuzaki13/react-foundation-lib/error-report";
 
+import { HTTP_METHOD_GET, HTTP_HEADER_CONTENT_TYPE, HTTP_CONTENT_TYPE_HTML } from "../../http/httpProtocolConstants";
+
+import { ODATA_BASE_URL_DIRECT } from "./odataBaseUrlConstants";
 import { type FetchErrorReportContext } from "./types";
 import { BaseUrlMap, getInputUrl, normalizeRelativePath } from "./url";
 
+const ODATA_ERROR_REPORT_URL_NORMALIZED = "normalized";
+const ODATA_ERROR_REPORT_URL_VERBATIM = "verbatim";
+
+/** Источники совпадают с ветками разбора ответа в OData-транспорте. */
+export const ODATA_ERROR_SOURCE_PARSE_RESPONSE = "fetch.parseResponse";
+export const ODATA_ERROR_SOURCE_BUILD_HTTP_ERROR = "fetch.buildHttpError";
+
 const MAX_HTML_INPUT_NAMES = 40;
 const MAX_HTML_SAMPLE_BYTES = 2 * 1_024;
-export type ODataErrorReportUrlPolicy = "normalized" | "verbatim";
+export type ODataErrorReportUrlPolicy = typeof ODATA_ERROR_REPORT_URL_NORMALIZED | typeof ODATA_ERROR_REPORT_URL_VERBATIM;
 
-let errorReportUrlPolicy: ODataErrorReportUrlPolicy = "normalized";
+let errorReportUrlPolicy: ODataErrorReportUrlPolicy = ODATA_ERROR_REPORT_URL_NORMALIZED;
 
 /**
  * Управляет подробностью диагностики неожиданного HTML-ответа OData.
@@ -15,7 +25,7 @@ let errorReportUrlPolicy: ODataErrorReportUrlPolicy = "normalized";
  * получить исходные URL и короткий HTML-фрагмент, а затем восстановить умолчание.
  */
 export function setODataErrorReportUrlPolicy(policy: ODataErrorReportUrlPolicy | undefined): void {
-	errorReportUrlPolicy = policy ?? "normalized";
+	errorReportUrlPolicy = policy ?? ODATA_ERROR_REPORT_URL_NORMALIZED;
 }
 
 function normalizeUrlForReport(url: string) {
@@ -30,14 +40,14 @@ function normalizeUrlForReport(url: string) {
 }
 
 function getUrlForReport(url: string) {
-	return errorReportUrlPolicy === "verbatim" ? url : normalizeUrlForReport(url);
+	return errorReportUrlPolicy === ODATA_ERROR_REPORT_URL_VERBATIM ? url : normalizeUrlForReport(url);
 }
 
 function readHtmlDocument(html: string) {
 	if (typeof DOMParser === "undefined") return undefined;
 
 	try {
-		return new DOMParser().parseFromString(html, "text/html");
+		return new DOMParser().parseFromString(html, HTTP_CONTENT_TYPE_HTML);
 	} catch {
 		return undefined;
 	}
@@ -83,12 +93,12 @@ function createHtmlResponseSummary(html: string) {
 		formCount: countHtmlForms(html, doc),
 		inputNames: collectHtmlInputNames(html, doc)
 	};
-	return errorReportUrlPolicy === "verbatim" ? { ...summary, ...createHtmlResponseSample(html) } : summary;
+	return errorReportUrlPolicy === ODATA_ERROR_REPORT_URL_VERBATIM ? { ...summary, ...createHtmlResponseSample(html) } : summary;
 }
 
 export function reportUnexpectedHtmlResponse(
 	error: Error,
-	source: "fetch.parseResponse" | "fetch.buildHttpError",
+	source: typeof ODATA_ERROR_SOURCE_PARSE_RESPONSE | typeof ODATA_ERROR_SOURCE_BUILD_HTTP_ERROR,
 	res: Response,
 	text: string,
 	context: FetchErrorReportContext | undefined
@@ -97,19 +107,19 @@ export function reportUnexpectedHtmlResponse(
 	const requestUrl = inputUrl?.startsWith("http")
 		? inputUrl
 		: inputUrl
-			? `${BaseUrlMap[context?.baseUrlType ?? ""]}${inputUrl}`
+			? `${BaseUrlMap[context?.baseUrlType ?? ODATA_BASE_URL_DIRECT]}${inputUrl}`
 			: undefined;
 
 	reportTransportError(error, {
 		source,
 		requestUrl: requestUrl ? getUrlForReport(requestUrl) : undefined,
 		responseUrl: res.url ? getUrlForReport(res.url) : undefined,
-		method: context?.init.method?.toUpperCase() ?? "GET",
+		method: context?.init.method?.toUpperCase() ?? HTTP_METHOD_GET,
 		baseUrlType: context?.baseUrlType,
 		sapClient: context?.sapClient,
 		status: res.status,
 		statusText: res.statusText,
-		contentType: res.headers.get("Content-Type") || undefined,
+		contentType: res.headers.get(HTTP_HEADER_CONTENT_TYPE) || undefined,
 		redirected: res.redirected,
 		responseType: res.type,
 		html: createHtmlResponseSummary(text)

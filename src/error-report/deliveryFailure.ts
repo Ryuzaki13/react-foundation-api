@@ -1,9 +1,16 @@
 import { type ErrorReportQueueFailureKind } from "@ryuzaki13/react-foundation-lib/error-report";
 
-const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429]);
+import { HTTP_STATUS_REQUEST_TIMEOUT, HTTP_STATUS_TOO_EARLY, HTTP_STATUS_TOO_MANY_REQUESTS } from "../http/httpProtocolConstants";
+
+import { ERROR_REPORT_DELIVERY_POLICY_RETRY, ERROR_REPORT_DELIVERY_POLICY_TERMINAL } from "./deliveryFailureConstants";
+
+const HTTP_STATUS_MIN = 100;
+const HTTP_STATUS_MAX = 599;
+const HTTP_SERVER_ERROR_STATUS_MIN = 500;
+const RETRYABLE_HTTP_STATUSES = new Set<number>([HTTP_STATUS_REQUEST_TIMEOUT, HTTP_STATUS_TOO_EARLY, HTTP_STATUS_TOO_MANY_REQUESTS]);
 
 export type ErrorReportDeliveryFailureClassification = {
-	readonly policy: "retry" | "terminal";
+	readonly policy: typeof ERROR_REPORT_DELIVERY_POLICY_RETRY | typeof ERROR_REPORT_DELIVERY_POLICY_TERMINAL;
 	readonly kind: ErrorReportQueueFailureKind;
 	readonly httpStatus?: number;
 	readonly retryAfterMs?: number;
@@ -18,7 +25,7 @@ export class ErrorReportDeliveryHttpError extends Error {
 	public readonly retryAfterMs?: number;
 
 	public constructor(status: number, retryAfterMs?: number) {
-		if (!Number.isInteger(status) || status < 100 || status > 599) {
+		if (!Number.isInteger(status) || status < HTTP_STATUS_MIN || status > HTTP_STATUS_MAX) {
 			throw new Error("HTTP status доставки отчёта должен быть целым числом от 100 до 599");
 		}
 		if (retryAfterMs !== undefined && (!Number.isFinite(retryAfterMs) || retryAfterMs < 0)) {
@@ -45,7 +52,9 @@ function readHttpStatus(error: unknown) {
 	if (error instanceof ErrorReportDeliveryHttpError) return error.status;
 	if (typeof error !== "object" || error === null || !("status" in error)) return undefined;
 	const status = error.status;
-	return typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
+	return typeof status === "number" && Number.isInteger(status) && status >= HTTP_STATUS_MIN && status <= HTTP_STATUS_MAX
+		? status
+		: undefined;
 }
 
 function readRetryAfterMs(error: unknown) {
@@ -59,9 +68,9 @@ function readRetryAfterMs(error: unknown) {
 export function classifyErrorReportDeliveryFailure(error: unknown): ErrorReportDeliveryFailureClassification {
 	const httpStatus = readHttpStatus(error);
 	if (httpStatus !== undefined) {
-		const retryable = RETRYABLE_HTTP_STATUSES.has(httpStatus) || httpStatus >= 500;
+		const retryable = RETRYABLE_HTTP_STATUSES.has(httpStatus) || httpStatus >= HTTP_SERVER_ERROR_STATUS_MIN;
 		return {
-			policy: retryable ? "retry" : "terminal",
+			policy: retryable ? ERROR_REPORT_DELIVERY_POLICY_RETRY : ERROR_REPORT_DELIVERY_POLICY_TERMINAL,
 			kind: "http",
 			httpStatus,
 			retryAfterMs: readRetryAfterMs(error)
@@ -69,8 +78,8 @@ export function classifyErrorReportDeliveryFailure(error: unknown): ErrorReportD
 	}
 
 	if (error instanceof ErrorReportDeliveryTimeoutError || (error instanceof DOMException && error.name === "AbortError")) {
-		return { policy: "retry", kind: "timeout" };
+		return { policy: ERROR_REPORT_DELIVERY_POLICY_RETRY, kind: "timeout" };
 	}
-	if (error instanceof TypeError) return { policy: "retry", kind: "network" };
-	return { policy: "retry", kind: "unknown" };
+	if (error instanceof TypeError) return { policy: ERROR_REPORT_DELIVERY_POLICY_RETRY, kind: "network" };
+	return { policy: ERROR_REPORT_DELIVERY_POLICY_RETRY, kind: "unknown" };
 }

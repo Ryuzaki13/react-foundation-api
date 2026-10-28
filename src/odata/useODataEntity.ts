@@ -6,6 +6,8 @@ import { useODataMetadata } from "./useODataMetadata";
 
 import type { CollectionPair } from "@ryuzaki13/react-foundation-lib/odata-service";
 
+const ODATA_COLUMN_SEMANTIC_TYPE_CODE = "code";
+
 const throwErrorText = "Использование actions недопустимо до окончания загрузки metadata";
 
 // function throwNoMetadata() {
@@ -32,7 +34,7 @@ export function useODataEntity(odata: ODataServiceConfig) {
 		const getKeyPairs = () => {
 			if (!metadata) throw new Error(throwErrorText);
 			return metadata.columns
-				?.filter((c) => c.semanticType === "code" && c.linkedColumnId)
+				?.filter((c) => c.semanticType === ODATA_COLUMN_SEMANTIC_TYPE_CODE && c.linkedColumnId)
 				.map((c) => ({ codeKey: c.id, textKey: c.linkedColumnId }) as CollectionPair);
 		};
 		const getKeyPairsMap = () => {
@@ -40,7 +42,7 @@ export function useODataEntity(odata: ODataServiceConfig) {
 			const pairs: Record<string, string> = {};
 
 			for (const column of metadata.columns ?? []) {
-				if (column.semanticType === "code" && column.linkedColumnId) {
+				if (column.semanticType === ODATA_COLUMN_SEMANTIC_TYPE_CODE && column.linkedColumnId) {
 					pairs[column.id] = column.linkedColumnId;
 				}
 			}

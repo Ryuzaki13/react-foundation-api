@@ -5,6 +5,8 @@ import { XMLParser } from "fast-xml-parser";
 
 import type { UserTransport } from "./types";
 
+const USER_TRANSPORT_NUMBER_KEY = "transportNo";
+
 const parser = new XMLParser({
 	ignoreAttributes: false,
 	attributeNamePrefix: "",
@@ -66,7 +68,7 @@ export function parseUserTransportsXml(xml: string): UserTransport[] {
 	});
 
 	if (transportHeaders.length > 0) {
-		return arrayUniqueBy(transportHeaders, "transportNo");
+		return arrayUniqueBy(transportHeaders, USER_TRANSPORT_NUMBER_KEY);
 	}
 
 	const transportNos = collectByKey(parsed, "TRKORR")
@@ -82,5 +84,5 @@ export function parseUserTransportsXml(xml: string): UserTransport[] {
 			parentTransportNo: undefined
 		}));
 
-	return arrayUniqueBy(transportNos, "transportNo");
+	return arrayUniqueBy(transportNos, USER_TRANSPORT_NUMBER_KEY);
 }

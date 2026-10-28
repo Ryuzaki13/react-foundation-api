@@ -2,6 +2,8 @@ import { type QueryClient } from "@tanstack/react-query";
 
 import { type ResourceMutationOperation, type ResourceQueryOperation } from "../resource";
 
+const SERVER_FN_RESPONSE_TRANSFORM_OPTION = "transform";
+
 /**
  * Минимальный client-safe контракт TanStack Start server function.
  *
@@ -123,7 +125,7 @@ export function createServerFnQueryOperation<TScope, TArgs, TData, TResponse, TR
 				options.executor
 			);
 
-			if ("transform" in options) {
+			if (SERVER_FN_RESPONSE_TRANSFORM_OPTION in options) {
 				return options.transform(response, { scope, args });
 			}
 
@@ -158,7 +160,7 @@ export function createServerFnMutationOperation<TScope, TInput, TData, TResponse
 				options.executor
 			);
 
-			if ("transform" in options) {
+			if (SERVER_FN_RESPONSE_TRANSFORM_OPTION in options) {
 				return options.transform(response, { scope, input });
 			}
 

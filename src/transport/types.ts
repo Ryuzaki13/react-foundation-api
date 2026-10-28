@@ -1,4 +1,6 @@
-export type TransportRequestType = "workbench" | "customizing";
+import { type TRANSPORT_REQUEST_TYPE_WORKBENCH, type TRANSPORT_REQUEST_TYPE_CUSTOMIZING } from "./transportRequestConstants";
+
+export type TransportRequestType = typeof TRANSPORT_REQUEST_TYPE_WORKBENCH | typeof TRANSPORT_REQUEST_TYPE_CUSTOMIZING;
 export type TransportRequestScope = TransportRequestType | "all";
 
 export interface TransportRequest {

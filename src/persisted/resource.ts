@@ -2,6 +2,14 @@ import { queryOptions, useMutation, useQuery, useQueryClient, type QueryClient }
 
 import { applyPersistedCacheStrategy } from "./cache";
 import { createPersistedRecordKeys } from "./keys";
+import {
+	PERSISTED_OPERATION_LIST,
+	PERSISTED_OPERATION_LATEST,
+	PERSISTED_OPERATION_HISTORY,
+	PERSISTED_OPERATION_SAVE,
+	PERSISTED_OPERATION_CREATE,
+	PERSISTED_OPERATION_DELETE
+} from "./persistedOperationConstants";
 
 import type {
 	CreatePersistedResourceDescriptorOptions,
@@ -266,96 +274,96 @@ export function createPersistedResourceDescriptor<
  * Подключает capability `list` к `useQuery`.
  */
 export function usePersistedListQuery<TScope, TResult>(
-	descriptor: ReadDescriptor<TScope, void, TResult, "list">,
+	descriptor: ReadDescriptor<TScope, void, TResult, typeof PERSISTED_OPERATION_LIST>,
 	scope: TScope | null | undefined
 ) {
-	return usePersistedQuery(descriptor, "list", scope, undefined);
+	return usePersistedQuery(descriptor, PERSISTED_OPERATION_LIST, scope, undefined);
 }
 
 /**
  * Подключает capability `latest` к `useQuery`.
  */
 export function usePersistedLatestQuery<TScope, TResult>(
-	descriptor: ReadDescriptor<TScope, void, TResult, "latest">,
+	descriptor: ReadDescriptor<TScope, void, TResult, typeof PERSISTED_OPERATION_LATEST>,
 	scope: TScope | null | undefined
 ) {
-	return usePersistedQuery(descriptor, "latest", scope, undefined);
+	return usePersistedQuery(descriptor, PERSISTED_OPERATION_LATEST, scope, undefined);
 }
 
 /**
  * Подключает capability `history` к `useQuery`.
  */
 export function usePersistedHistoryQuery<TScope, TArgs, TResult>(
-	descriptor: ReadDescriptor<TScope, TArgs, TResult, "history">,
+	descriptor: ReadDescriptor<TScope, TArgs, TResult, typeof PERSISTED_OPERATION_HISTORY>,
 	scope: TScope | null | undefined,
 	args: TArgs
 ) {
-	return usePersistedQuery(descriptor, "history", scope, args);
+	return usePersistedQuery(descriptor, PERSISTED_OPERATION_HISTORY, scope, args);
 }
 
 /**
  * Императивно загружает capability `list` через `QueryClient`.
  */
 export async function getPersistedListData<TScope, TResult>(
-	descriptor: ReadDescriptor<TScope, void, TResult, "list">,
+	descriptor: ReadDescriptor<TScope, void, TResult, typeof PERSISTED_OPERATION_LIST>,
 	scope: TScope | null | undefined,
 	queryClient: QueryClient
 ) {
-	return await getPersistedQueryData(descriptor, "list", scope, undefined, queryClient);
+	return await getPersistedQueryData(descriptor, PERSISTED_OPERATION_LIST, scope, undefined, queryClient);
 }
 
 /**
  * Императивно загружает capability `latest` через `QueryClient`.
  */
 export async function getPersistedLatestData<TScope, TResult>(
-	descriptor: ReadDescriptor<TScope, void, TResult, "latest">,
+	descriptor: ReadDescriptor<TScope, void, TResult, typeof PERSISTED_OPERATION_LATEST>,
 	scope: TScope | null | undefined,
 	queryClient: QueryClient
 ) {
-	return await getPersistedQueryData(descriptor, "latest", scope, undefined, queryClient);
+	return await getPersistedQueryData(descriptor, PERSISTED_OPERATION_LATEST, scope, undefined, queryClient);
 }
 
 /**
  * Императивно загружает capability `history` через `QueryClient`.
  */
 export async function getPersistedHistoryData<TScope, TArgs, TResult>(
-	descriptor: ReadDescriptor<TScope, TArgs, TResult, "history">,
+	descriptor: ReadDescriptor<TScope, TArgs, TResult, typeof PERSISTED_OPERATION_HISTORY>,
 	scope: TScope | null | undefined,
 	args: TArgs,
 	queryClient: QueryClient
 ) {
-	return await getPersistedQueryData(descriptor, "history", scope, args, queryClient);
+	return await getPersistedQueryData(descriptor, PERSISTED_OPERATION_HISTORY, scope, args, queryClient);
 }
 
 /**
  * Подключает capability `save` к `useMutation`.
  */
 export function usePersistedSaveMutation<TScope, TInput, TResult>(
-	descriptor: WriteDescriptor<TScope, TInput, TResult, "save">,
+	descriptor: WriteDescriptor<TScope, TInput, TResult, typeof PERSISTED_OPERATION_SAVE>,
 	scope: TScope | null | undefined,
 	options?: UsePersistedMutationOptions<TScope, TInput, TResult>
 ) {
-	return usePersistedMutation(descriptor, "save", scope, options);
+	return usePersistedMutation(descriptor, PERSISTED_OPERATION_SAVE, scope, options);
 }
 
 /**
  * Подключает capability `create` к `useMutation`.
  */
 export function usePersistedCreateMutation<TScope, TInput, TResult>(
-	descriptor: WriteDescriptor<TScope, TInput, TResult, "create">,
+	descriptor: WriteDescriptor<TScope, TInput, TResult, typeof PERSISTED_OPERATION_CREATE>,
 	scope: TScope | null | undefined,
 	options?: UsePersistedMutationOptions<TScope, TInput, TResult>
 ) {
-	return usePersistedMutation(descriptor, "create", scope, options);
+	return usePersistedMutation(descriptor, PERSISTED_OPERATION_CREATE, scope, options);
 }
 
 /**
  * Подключает capability `delete` к `useMutation`.
  */
 export function usePersistedDeleteMutation<TScope, TInput, TResult>(
-	descriptor: WriteDescriptor<TScope, TInput, TResult, "delete">,
+	descriptor: WriteDescriptor<TScope, TInput, TResult, typeof PERSISTED_OPERATION_DELETE>,
 	scope: TScope | null | undefined,
 	options?: UsePersistedMutationOptions<TScope, TInput, TResult>
 ) {
-	return usePersistedMutation(descriptor, "delete", scope, options);
+	return usePersistedMutation(descriptor, PERSISTED_OPERATION_DELETE, scope, options);
 }

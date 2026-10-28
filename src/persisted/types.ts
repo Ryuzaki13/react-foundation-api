@@ -1,14 +1,25 @@
+import {
+	type PERSISTED_OPERATION_LIST,
+	type PERSISTED_OPERATION_LATEST,
+	type PERSISTED_OPERATION_HISTORY,
+	type PERSISTED_OPERATION_SAVE,
+	type PERSISTED_OPERATION_CREATE,
+	type PERSISTED_OPERATION_DELETE
+} from "./persistedOperationConstants";
+
 import type { QueryClient, QueryKey, QueryMeta } from "@tanstack/react-query";
 
 /**
  * Имена read-операций, которые generic-слой умеет подключать к `useQuery`.
  */
-export type PersistedReadOperationName = "list" | "latest" | "history";
+export type PersistedReadOperationName =
+	typeof PERSISTED_OPERATION_LIST | typeof PERSISTED_OPERATION_LATEST | typeof PERSISTED_OPERATION_HISTORY;
 
 /**
  * Имена write-операций, которые generic-слой умеет подключать к `useMutation`.
  */
-export type PersistedWriteOperationName = "save" | "create" | "delete";
+export type PersistedWriteOperationName =
+	typeof PERSISTED_OPERATION_SAVE | typeof PERSISTED_OPERATION_CREATE | typeof PERSISTED_OPERATION_DELETE;
 
 /**
  * Полный набор стандартных операций persisted-record ресурса.

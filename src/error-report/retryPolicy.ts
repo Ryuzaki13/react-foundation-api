@@ -1,6 +1,10 @@
 export const ERROR_REPORT_RETRY_BASE_MS = 5 * 1_000;
 export const ERROR_REPORT_RETRY_MAX_MS = 15 * 60 * 1_000;
 
+const RETRY_BACKOFF_MAX_EXPONENT = 30;
+const RETRY_BACKOFF_MULTIPLIER = 2;
+const RETRY_JITTER_BASE = 0.5;
+
 export type ErrorReportRetryDelayOptions = {
 	readonly attemptCount: number;
 	readonly retryAfterMs?: number;
@@ -21,8 +25,8 @@ export function calculateErrorReportRetryDelay(options: ErrorReportRetryDelayOpt
 		throw new Error("Retry jitter source должен возвращать число от 0 до 1");
 	}
 
-	const exponent = Math.min(options.attemptCount - 1, 30);
-	const backoff = ERROR_REPORT_RETRY_BASE_MS * 2 ** exponent * (0.5 + randomValue);
+	const exponent = Math.min(options.attemptCount - 1, RETRY_BACKOFF_MAX_EXPONENT);
+	const backoff = ERROR_REPORT_RETRY_BASE_MS * RETRY_BACKOFF_MULTIPLIER ** exponent * (RETRY_JITTER_BASE + randomValue);
 	const retryAfter = options.retryAfterMs ?? 0;
 	return Math.min(ERROR_REPORT_RETRY_MAX_MS, Math.max(backoff, retryAfter));
 }

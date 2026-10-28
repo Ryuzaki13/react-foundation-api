@@ -1,3 +1,7 @@
+import { HTTP_METHOD_GET, HTTP_METHOD_POST } from "../../http/httpProtocolConstants";
+
+const SSO_IFRAME_SETTLE_DELAY_MS = 400;
+
 export type SsoForm = {
 	action: string;
 	method: string;
@@ -60,7 +64,7 @@ function waitForIframe(iframe: HTMLIFrameElement, cleanup: () => void) {
 			settleTimer = window.setTimeout(() => {
 				cleanup();
 				resolve(true);
-			}, 400);
+			}, SSO_IFRAME_SETTLE_DELAY_MS);
 		};
 
 		iframe.addEventListener("load", complete);
@@ -70,7 +74,7 @@ function waitForIframe(iframe: HTMLIFrameElement, cleanup: () => void) {
 
 function createSsoFormElement(form: SsoForm, target: string) {
 	const formElement = document.createElement("form");
-	formElement.method = form.method === "GET" ? "GET" : "POST";
+	formElement.method = form.method === HTTP_METHOD_GET ? HTTP_METHOD_GET : HTTP_METHOD_POST;
 	formElement.action = normalizeSsoAction(form.action);
 	formElement.target = target;
 	formElement.style.display = "none";

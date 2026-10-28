@@ -1,3 +1,5 @@
+import { ODATA_BASE_URL_DEFAULT, ODATA_BASE_URL_DP0 } from "./transport/odataBaseUrlConstants";
+
 import type { BaseURLType } from "./transport/types";
 
 export type ODataProjectTechnicalEndpoint = {
@@ -34,10 +36,10 @@ export function normalizeODataServiceName(service: string) {
 export function resolveODataBaseUrl(service: string, baseUrl?: BaseURLType): BaseURLType {
 	const devDp0Service = odataProjectAdapter.devDp0Service;
 	if ((__DEV__ || __PREVIEW__) && devDp0Service && normalizeODataServiceName(service) === normalizeODataServiceName(devDp0Service)) {
-		return "odataDp0";
+		return ODATA_BASE_URL_DP0;
 	}
 
-	return baseUrl ?? "odata";
+	return baseUrl ?? ODATA_BASE_URL_DEFAULT;
 }
 
 export function resolveODataSapClient() {

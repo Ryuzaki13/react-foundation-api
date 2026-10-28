@@ -1,6 +1,15 @@
 import { httpFetchPayload } from "../http";
+import {
+	type HTTP_METHOD_POST,
+	type HTTP_METHOD_PUT,
+	type HTTP_METHOD_DELETE,
+	HTTP_HEADER_CONTENT_TYPE,
+	HTTP_CONTENT_TYPE_JSON
+} from "../http/httpProtocolConstants";
 
 import type { PersistedMutationOperation, PersistedQueryOperation } from "./types";
+
+const REST_RESPONSE_TRANSFORM_OPTION = "transform";
 
 /**
  * Нормализованная форма REST-запроса, передаваемая executor-у.
@@ -55,7 +64,7 @@ type PersistedRestMappedReadOperationOptions<TScope, TArgs, TResponse, TResult> 
 interface PersistedRestWriteOperationBaseOptions<TScope, TInput, TResponse> {
 	baseUrl?: string;
 	buildUrl: (scope: TScope, input: TInput) => string;
-	method: "POST" | "PUT" | "DELETE";
+	method: typeof HTTP_METHOD_POST | typeof HTTP_METHOD_PUT | typeof HTTP_METHOD_DELETE;
 	buildInit?: (scope: TScope, input: TInput) => Omit<RequestInit, "method" | "body">;
 	bodyMapper?: (scope: TScope, input: TInput) => unknown;
 	parseResponse?: PersistedRestResponseParser<TResponse>;
@@ -137,7 +146,7 @@ export function createPersistedRestQueryOperation<TScope, TArgs, TResponse, TRes
 				}
 			);
 
-			if ("transform" in options) {
+			if (REST_RESPONSE_TRANSFORM_OPTION in options) {
 				return options.transform(data, { scope, args });
 			}
 
@@ -184,7 +193,7 @@ export function createPersistedRestMutationOperation<TScope, TInput, TResponse, 
 					baseUrl: options.baseUrl,
 					init: {
 						method: options.method,
-						headers: payload === undefined ? undefined : { "Content-Type": "application/json" },
+						headers: payload === undefined ? undefined : { [HTTP_HEADER_CONTENT_TYPE]: HTTP_CONTENT_TYPE_JSON },
 						...options.buildInit?.(scope, input),
 						body: payload === undefined ? undefined : JSON.stringify(payload)
 					}
@@ -195,7 +204,7 @@ export function createPersistedRestMutationOperation<TScope, TInput, TResponse, 
 				}
 			);
 
-			if ("transform" in options) {
+			if (REST_RESPONSE_TRANSFORM_OPTION in options) {
 				return options.transform(data, { scope, input });
 			}
 

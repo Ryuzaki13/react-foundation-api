@@ -10,7 +10,24 @@ import {
 
 import { createErrorReportDeliveryBody, type ErrorReportDeliveryBody } from "./deliveryBody";
 import { classifyErrorReportDeliveryFailure, ErrorReportDeliveryTimeoutError } from "./deliveryFailure";
+import { ERROR_REPORT_DELIVERY_POLICY_TERMINAL } from "./deliveryFailureConstants";
 import { calculateErrorReportRetryDelay } from "./retryPolicy";
+
+const DELIVERY_EVENT_DELIVERED = "delivered";
+const DELIVERY_EVENT_RETRY_SCHEDULED = "retry-scheduled";
+const DELIVERY_EVENT_DISCARDED = "discarded";
+const DELIVERY_EVENT_LEASE_LOST = "lease-lost";
+const DELIVERY_EVENT_STORAGE_FAILURE = "storage-failure";
+const DELIVERY_STAGE_ENQUEUE = "enqueue";
+const DELIVERY_STAGE_LEASE = "lease";
+const DELIVERY_STAGE_ACKNOWLEDGE = "acknowledge";
+const DELIVERY_STAGE_RESCHEDULE = "reschedule";
+const DELIVERY_STAGE_DISCARD = "discard";
+const DELIVERY_STAGE_SCHEDULE = "schedule";
+const DELIVERY_STATUS_STORAGE_ERROR = "storage-error";
+const BROWSER_EVENT_ONLINE = "online";
+const BROWSER_EVENT_PAGE_SHOW = "pageshow";
+const DOCUMENT_EVENT_VISIBILITY_CHANGE = "visibilitychange";
 
 export const ERROR_REPORT_DELIVERY_TIMEOUT_MS = 20 * 1_000;
 export const ERROR_REPORT_DELIVERY_IDLE_POLL_MS = 30 * 1_000;
@@ -24,11 +41,24 @@ export type ErrorReportDeliveryContext = {
 export type ErrorReportDeliveryAdapter = (body: ErrorReportDeliveryBody, context: ErrorReportDeliveryContext) => Promise<void>;
 
 export type ErrorReportDeliveryCoordinatorEvent =
-	| { readonly type: "delivered"; readonly reportId: string }
-	| { readonly type: "retry-scheduled"; readonly reportId: string; readonly nextAttemptUtc: string }
-	| { readonly type: "discarded"; readonly reportId: string; readonly httpStatus?: number }
-	| { readonly type: "lease-lost"; readonly reportId: string; readonly stage: "acknowledge" | "reschedule" | "discard" }
-	| { readonly type: "storage-failure"; readonly stage: "enqueue" | "lease" | "acknowledge" | "reschedule" | "discard" | "schedule" };
+	| { readonly type: typeof DELIVERY_EVENT_DELIVERED; readonly reportId: string }
+	| { readonly type: typeof DELIVERY_EVENT_RETRY_SCHEDULED; readonly reportId: string; readonly nextAttemptUtc: string }
+	| { readonly type: typeof DELIVERY_EVENT_DISCARDED; readonly reportId: string; readonly httpStatus?: number }
+	| {
+			readonly type: typeof DELIVERY_EVENT_LEASE_LOST;
+			readonly reportId: string;
+			readonly stage: typeof DELIVERY_STAGE_ACKNOWLEDGE | typeof DELIVERY_STAGE_RESCHEDULE | typeof DELIVERY_STAGE_DISCARD;
+	  }
+	| {
+			readonly type: typeof DELIVERY_EVENT_STORAGE_FAILURE;
+			readonly stage:
+				| typeof DELIVERY_STAGE_ENQUEUE
+				| typeof DELIVERY_STAGE_LEASE
+				| typeof DELIVERY_STAGE_ACKNOWLEDGE
+				| typeof DELIVERY_STAGE_RESCHEDULE
+				| typeof DELIVERY_STAGE_DISCARD
+				| typeof DELIVERY_STAGE_SCHEDULE;
+	  };
 
 export type ErrorReportDeliveryFlushResult = {
 	readonly delivered: number;
@@ -38,7 +68,7 @@ export type ErrorReportDeliveryFlushResult = {
 	readonly storageFailures: number;
 };
 
-export type ErrorReportDeliveryEnqueueResult = ErrorReportQueueEnqueueResult | { readonly status: "storage-error" };
+export type ErrorReportDeliveryEnqueueResult = ErrorReportQueueEnqueueResult | { readonly status: typeof DELIVERY_STATUS_STORAGE_ERROR };
 
 export type CreateErrorReportDeliveryCoordinatorOptions = {
 	readonly queue: ErrorReportQueue;
@@ -157,9 +187,9 @@ export function createErrorReportDeliveryCoordinator(options: CreateErrorReportD
 	const recordLeaseLost = (
 		result: ErrorReportDeliveryFlushResult,
 		reportId: string,
-		stage: Extract<ErrorReportDeliveryCoordinatorEvent, { type: "lease-lost" }>["stage"]
+		stage: Extract<ErrorReportDeliveryCoordinatorEvent, { type: typeof DELIVERY_EVENT_LEASE_LOST }>["stage"]
 	) => {
-		emit({ type: "lease-lost", reportId, stage });
+		emit({ type: DELIVERY_EVENT_LEASE_LOST, reportId, stage });
 		return addResult(result, "leaseLost");
 	};
 
@@ -171,7 +201,7 @@ export function createErrorReportDeliveryCoordinator(options: CreateErrorReportD
 			try {
 				record = await options.queue.leaseNext({ ownerId, now: now(), leaseDurationMs });
 			} catch {
-				emit({ type: "storage-failure", stage: "lease" });
+				emit({ type: DELIVERY_EVENT_STORAGE_FAILURE, stage: DELIVERY_STAGE_LEASE });
 				result = addResult(result, "storageFailures");
 				break;
 			}
@@ -182,29 +212,29 @@ export function createErrorReportDeliveryCoordinator(options: CreateErrorReportD
 				try {
 					const transition = await options.queue.acknowledge(record.reportId, ownerId);
 					if (isUpdated(transition)) {
-						emit({ type: "delivered", reportId: record.reportId });
+						emit({ type: DELIVERY_EVENT_DELIVERED, reportId: record.reportId });
 						result = addResult(result, "delivered");
 					} else {
-						result = recordLeaseLost(result, record.reportId, "acknowledge");
+						result = recordLeaseLost(result, record.reportId, DELIVERY_STAGE_ACKNOWLEDGE);
 					}
 				} catch {
-					emit({ type: "storage-failure", stage: "acknowledge" });
+					emit({ type: DELIVERY_EVENT_STORAGE_FAILURE, stage: DELIVERY_STAGE_ACKNOWLEDGE });
 					result = addResult(result, "storageFailures");
 					break;
 				}
 			} catch (error) {
 				const failure = classifyErrorReportDeliveryFailure(error);
-				if (failure.policy === "terminal") {
+				if (failure.policy === ERROR_REPORT_DELIVERY_POLICY_TERMINAL) {
 					try {
 						const transition = await options.queue.discard(record.reportId, ownerId);
 						if (isUpdated(transition)) {
-							emit({ type: "discarded", reportId: record.reportId, httpStatus: failure.httpStatus });
+							emit({ type: DELIVERY_EVENT_DISCARDED, reportId: record.reportId, httpStatus: failure.httpStatus });
 							result = addResult(result, "discarded");
 						} else {
-							result = recordLeaseLost(result, record.reportId, "discard");
+							result = recordLeaseLost(result, record.reportId, DELIVERY_STAGE_DISCARD);
 						}
 					} catch {
-						emit({ type: "storage-failure", stage: "discard" });
+						emit({ type: DELIVERY_EVENT_STORAGE_FAILURE, stage: DELIVERY_STAGE_DISCARD });
 						result = addResult(result, "storageFailures");
 						break;
 					}
@@ -228,13 +258,13 @@ export function createErrorReportDeliveryCoordinator(options: CreateErrorReportD
 						}
 					});
 					if (isUpdated(transition)) {
-						emit({ type: "retry-scheduled", reportId: record.reportId, nextAttemptUtc: scheduledUtc });
+						emit({ type: DELIVERY_EVENT_RETRY_SCHEDULED, reportId: record.reportId, nextAttemptUtc: scheduledUtc });
 						result = addResult(result, "retried");
 					} else {
-						result = recordLeaseLost(result, record.reportId, "reschedule");
+						result = recordLeaseLost(result, record.reportId, DELIVERY_STAGE_RESCHEDULE);
 					}
 				} catch {
-					emit({ type: "storage-failure", stage: "reschedule" });
+					emit({ type: DELIVERY_EVENT_STORAGE_FAILURE, stage: DELIVERY_STAGE_RESCHEDULE });
 					result = addResult(result, "storageFailures");
 					break;
 				}
@@ -244,7 +274,7 @@ export function createErrorReportDeliveryCoordinator(options: CreateErrorReportD
 		try {
 			nextWakeUtc = await options.queue.getNextWakeUtc(now());
 		} catch {
-			emit({ type: "storage-failure", stage: "schedule" });
+			emit({ type: DELIVERY_EVENT_STORAGE_FAILURE, stage: DELIVERY_STAGE_SCHEDULE });
 			result = addResult(result, "storageFailures");
 			nextWakeUtc = undefined;
 		}
@@ -280,9 +310,9 @@ export function createErrorReportDeliveryCoordinator(options: CreateErrorReportD
 		if (pollTimer) clearTimeout(pollTimer);
 		pollTimer = undefined;
 		activeController?.abort();
-		window.removeEventListener("online", onlineListener);
-		window.removeEventListener("pageshow", pageShowListener);
-		document.removeEventListener("visibilitychange", visibilityListener);
+		window.removeEventListener(BROWSER_EVENT_ONLINE, onlineListener);
+		window.removeEventListener(BROWSER_EVENT_PAGE_SHOW, pageShowListener);
+		document.removeEventListener(DOCUMENT_EVENT_VISIBILITY_CHANGE, visibilityListener);
 	};
 
 	const coordinator: ErrorReportDeliveryCoordinator = {
@@ -292,8 +322,8 @@ export function createErrorReportDeliveryCoordinator(options: CreateErrorReportD
 				if (result.status === "enqueued" || result.status === "duplicate") coordinator.wake();
 				return result;
 			} catch {
-				emit({ type: "storage-failure", stage: "enqueue" });
-				return { status: "storage-error" };
+				emit({ type: DELIVERY_EVENT_STORAGE_FAILURE, stage: DELIVERY_STAGE_ENQUEUE });
+				return { status: DELIVERY_STATUS_STORAGE_ERROR };
 			}
 		},
 		flush,
@@ -308,9 +338,9 @@ export function createErrorReportDeliveryCoordinator(options: CreateErrorReportD
 			if (started) return stop;
 
 			started = true;
-			window.addEventListener("online", onlineListener);
-			window.addEventListener("pageshow", pageShowListener);
-			document.addEventListener("visibilitychange", visibilityListener);
+			window.addEventListener(BROWSER_EVENT_ONLINE, onlineListener);
+			window.addEventListener(BROWSER_EVENT_PAGE_SHOW, pageShowListener);
+			document.addEventListener(DOCUMENT_EVENT_VISIBILITY_CHANGE, visibilityListener);
 			coordinator.wake();
 			return stop;
 		},
