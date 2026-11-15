@@ -19,12 +19,16 @@ import { BaseURLType, fetchQueryFn, resolveODataBaseUrl } from "./transport";
 
 import type { ODataServiceConfig } from "@ryuzaki13/react-foundation-lib/odata-service";
 
-type ODataMetadataOptions = Pick<ODataServiceConfig, "service"> & { baseUrl?: BaseURLType };
+export type ODataMetadataOptions = Pick<ODataServiceConfig, "service"> & { baseUrl?: BaseURLType };
 
-export function fetchMetadata(options: ODataMetadataOptions) {
+/** HTTP cache policy относится к одному чтению и не меняет identity metadata query. */
+export type ODataMetadataFetchOptions = ODataMetadataOptions & { cache?: RequestCache };
+
+export function fetchMetadata(options: ODataMetadataFetchOptions) {
 	return fetchQueryFn(`/${options.service}/$metadata`, {
 		baseUrl: resolveODataBaseUrl(options.service, options.baseUrl),
 		init: {
+			...(options.cache === undefined ? {} : { cache: options.cache }),
 			headers: {
 				[HTTP_HEADER_ACCEPT]: "*/*",
 				[HTTP_HEADER_CONTENT_TYPE]: "application/xml"

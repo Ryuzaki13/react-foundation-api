@@ -3064,6 +3064,8 @@ Content-Type: application/xml
 
 Если XML невозможно разобрать, ошибка оборачивается сообщением с именем сервиса. Это помогает отличить transport error от некорректной metadata.
 
+Опциональный `cache` в `ODataMetadataFetchOptions` задаёт HTTP cache policy конкретного чтения. По умолчанию поведение браузера не изменяется. Для обновления общего Query snapshot используйте `refreshODataMetadataData`, а не отдельный вызов query function.
+
 ### `odataMetadataQueryOptions`
 
 Factory возвращает готовые `queryOptions`:
@@ -3148,6 +3150,25 @@ const salesOrder = metadata?.entities.SalesOrderSet;
 5. Повторно получить metadata из QueryClient.
 
 Если технический version endpoint временно недоступен, ошибка version-check подавляется, а уже сохранённая metadata продолжает использоваться. Ошибка самой metadata не подавляется.
+
+### `refreshODataMetadataData`
+
+Выборочное восстановление после обнаруженной несовместимости конфигурации с metadata может принудительно перечитать один сервис:
+
+```ts
+import { refreshODataMetadataData } from "@ryuzaki13/react-foundation-api/odata";
+
+const metadata = await refreshODataMetadataData(
+  { service: "ZSALES_SRV" },
+  queryClient
+);
+```
+
+Helper выполняет один network reload с `cache: "reload"` через canonical metadata query. Он дожидается обычного inflight чтения, поскольку его ответ мог прийти из HTTP cache, а затем получает свежий ответ. Concurrent recovery-вызовы для одного resolved service/base URL и QueryClient разделяют эту попытку. Между вкладками общего network mutex нет.
+
+Данные обновляются штатным Query fetch, поэтому работают настроенные persistence и broadcast. Если первый fetch восстановил IndexedDB snapshot, helper дополнительно дожидается реального network reload. При ошибке Promise отклоняется, прежние metadata остаются в кеше; автоматического retry нет. Уход UI-подписчиков не отменяет общую попытку; явный `queryClient.cancelQueries` по-прежнему её прерывает. Временные query overrides не меняют последующее обычное чтение. Пустой `service` возвращает `undefined`.
+
+Выбор причины и ограничение количества recovery-попыток принадлежат сценарию приложения. Helper не меняет version-check, его временные сравнения или query других сервисов.
 
 ### Почему нельзя делать обычный `fetch(".../$metadata")`
 
@@ -4932,6 +4953,8 @@ it("после create инвалидирует список", async () => {
 | `useODataMetadataVersionQuery` | Отдельная диагностика server version |
 | `applyODataMetadataVersion` | Сравнить version и точечно invalidировать metadata |
 | `getODataMetadataData` | Императивно получить актуальную metadata через QueryClient |
+| `refreshODataMetadataData` | Адресно перечитать metadata с HTTP reload и обновить общий Query snapshot |
+| `ODataMetadataOptions`, `ODataMetadataFetchOptions` | Identity metadata и опциональная HTTP cache policy одного чтения |
 | `useODataMetadata` | Metadata одной Entity |
 | `useODataEntity` | Entity metadata + path/columns/code-text actions |
 | `ODataEntity` | Тип готовой Entity model без loading flag |

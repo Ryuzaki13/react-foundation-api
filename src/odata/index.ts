@@ -1,6 +1,7 @@
 export * from "./createODataCollectionQueryKey";
 export * from "./flattenODataDependentServices";
 export * from "./odataProjectAdapter";
+export * from "./refreshODataMetadataData";
 export * from "./sortODataDependentSegmentItemsByChains";
 export * from "./sortODataDependentServicesByChains";
 export * from "./transport";
